@@ -1,5 +1,5 @@
 # WORKFLOW-SESSION.md
-# @version: 1.7.0
+# @version: 1.8.0
 # @updated: 2026-03-15
 # @repo: https://github.com/Harshmaury/Forge
 
@@ -66,7 +66,7 @@ Go:1.23.0  uuid v1.6.0  SQLite(Phase2)  yaml.v3(Phase2)  cobra
 
 ## BUILD STATUS
 
-### 🔄 Phase 1 — Command Execution (IN PROGRESS)
+### ✅ Phase 1 — Command Execution (COMPLETE)
   internal/config/env.go              EnvOrDefault, ExpandHome
   internal/command/model.go           Command struct (ADR-004), RawCommandRequest, ExecutionResult
   internal/command/validator.go       5-field schema validation
@@ -130,6 +130,7 @@ Full protocol: WORKFLOW-DELIVERY.md
 
 ## CHANGELOG
 
+2026-03-15  v1.8.0  Phase 1 complete — main.go wired, all 8 steps done
 2026-03-15  v1.7.0  Phase 1 step 7 — API handlers + server
 2026-03-15  v1.6.0  Phase 1 step 6 — execution engine + tests
 2026-03-15  v1.5.0  Phase 1 step 5 — intent handlers (build, test, run, deploy) + tests
