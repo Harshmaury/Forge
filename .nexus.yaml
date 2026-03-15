@@ -1,0 +1,24 @@
+name: forge
+id: forge
+type: platform-service
+language: go
+version: 0.1.0
+
+keywords:
+  - forge
+  - workflow execution
+  - platform-service
+  - command execution
+  - intent model
+
+services:
+  - id: forge
+    name: Forge Execution Engine
+    provider: process
+    config: |
+      {
+        "command": "forge",
+        "dir":     "~/workspace/projects/apps/forge",
+        "env":     ["FORGE_HTTP_ADDR=:8082"],
+        "log":     "~/.nexus/logs/forge.log"
+      }
