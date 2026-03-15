@@ -2,11 +2,9 @@
 // @forge-path: internal/api/server.go
 // Forge HTTP API server on 127.0.0.1:8082 (ADR-003).
 //
-// Phase 2 additions:
-//   POST /workflows          create workflow
-//   GET  /workflows          list workflows
-//   GET  /workflows/:id      get workflow + steps
-//   POST /workflows/:id/run  execute workflow
+// Phase 1: POST /commands, GET /intents, GET /health
+// Phase 2: POST/GET /workflows, GET /workflows/:id, POST /workflows/:id/run
+// Phase 3: POST/GET /triggers, DELETE /triggers/:id
 package api
 
 import (
@@ -30,8 +28,8 @@ type ServerConfig struct {
 	Translator       *command.Translator
 	Resolver         *forgecontext.Resolver
 	Engine           *executor.Engine
-	Store            store.Storer          // Phase 2 — nil-safe, workflow routes disabled if nil
-	WorkflowExecutor *workflow.Executor    // Phase 2
+	Store            store.Storer
+	WorkflowExecutor *workflow.Executor
 	Logger           *log.Logger
 }
 
@@ -58,13 +56,21 @@ func NewServer(cfg ServerConfig) *Server {
 	mux.HandleFunc("POST /commands", commandH.Submit)
 	mux.HandleFunc("GET /intents",   intentsH.List)
 
-	// Phase 2 routes — only if store and executor are wired.
+	// Phase 2 + 3 routes — only if store is wired.
 	if cfg.Store != nil && cfg.WorkflowExecutor != nil {
-		wfH := handler.NewWorkflowHandler(cfg.Store, cfg.WorkflowExecutor, cfg.Resolver)
-		mux.HandleFunc("POST /workflows",            wfH.Create)
-		mux.HandleFunc("GET /workflows",             wfH.List)
-		mux.HandleFunc("GET /workflows/{id}",        wfH.Get)
-		mux.HandleFunc("POST /workflows/{id}/run",   wfH.Run)
+		wfH      := handler.NewWorkflowHandler(cfg.Store, cfg.WorkflowExecutor, cfg.Resolver)
+		triggerH := handler.NewTriggerHandler(cfg.Store)
+
+		// Phase 2
+		mux.HandleFunc("POST /workflows",          wfH.Create)
+		mux.HandleFunc("GET /workflows",            wfH.List)
+		mux.HandleFunc("GET /workflows/{id}",       wfH.Get)
+		mux.HandleFunc("POST /workflows/{id}/run",  wfH.Run)
+
+		// Phase 3
+		mux.HandleFunc("POST /triggers",            triggerH.Create)
+		mux.HandleFunc("GET /triggers",             triggerH.List)
+		mux.HandleFunc("DELETE /triggers/{id}",     triggerH.Delete)
 	}
 
 	return &Server{

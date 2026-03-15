@@ -1,5 +1,5 @@
 # WORKFLOW-SESSION.md
-# @version: 2.4.0
+# @version: 2.5.0
 # @updated: 2026-03-15
 # @repo: https://github.com/Harshmaury/Forge
 
@@ -90,7 +90,7 @@ Go:1.23.0  uuid v1.6.0  SQLite(Phase2)  yaml.v3(Phase2)  cobra
   internal/api/server.go        HTTP server on :8082
 
 ### ✅ Phase 2 — Workflow Definitions (COMPLETE)
-### 🔄 Phase 3 — Automation Triggers (IN PROGRESS)
+### ✅ Phase 3 — Automation Triggers (COMPLETE)
   internal/store/storer.go   Trigger type, 5 interface methods
   internal/store/db.go       v2 migration — triggers table
   internal/trigger/model.go      CreateTriggerRequest, Filter, Matches()
@@ -138,6 +138,7 @@ Full protocol: WORKFLOW-DELIVERY.md
 
 ## CHANGELOG
 
+2026-03-15  v2.5.0  Phase 3 complete — trigger API, subscriber wired, smoke test
 2026-03-15  v2.4.0  Phase 3 step 3 — trigger subscriber + tests
 2026-03-15  v2.3.0  Phase 3 step 2 — trigger model, registry, filter matching + tests
 2026-03-15  v2.2.0  Phase 3 step 1 — trigger store schema

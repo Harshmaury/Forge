@@ -3,13 +3,13 @@
 // forge is the Forge execution service daemon.
 //
 // Startup sequence:
-//  1. Config (env vars)
+//  1. Config
 //  2. HTTP clients (Nexus + Atlas)
-//  3. Translator
-//  4. Context resolver
-//  5. Execution engine + intent handlers
-//  6. Workflow store (SQLite — Phase 2)
-//  7. Workflow executor (Phase 2)
+//  3. Translator + context resolver
+//  4. Execution engine + intent handlers
+//  5. Workflow store (SQLite)
+//  6. Workflow executor
+//  7. Trigger registry + subscriber (Phase 3)
 //  8. HTTP API server (:8082)
 package main
 
@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 
 	"github.com/Harshmaury/Forge/internal/api"
@@ -31,10 +32,11 @@ import (
 	"github.com/Harshmaury/Forge/internal/executor/intent"
 	nexusclient "github.com/Harshmaury/Forge/internal/nexus"
 	"github.com/Harshmaury/Forge/internal/store"
+	"github.com/Harshmaury/Forge/internal/trigger"
 	"github.com/Harshmaury/Forge/internal/workflow"
 )
 
-const forgeVersion = "0.2.0"
+const forgeVersion = "0.3.0"
 
 func main() {
 	logger := log.New(os.Stdout, "[forge] ", log.LstdFlags)
@@ -72,13 +74,11 @@ func run(logger *log.Logger) error {
 		logger.Printf("Atlas connected at %s", atlasAddr)
 	}
 
-	// ── 3. TRANSLATOR ─────────────────────────────────────────────────────────
+	// ── 3. TRANSLATOR + RESOLVER ──────────────────────────────────────────────
 	translator := command.NewTranslator(workspaceRoot)
+	resolver   := forgecontext.NewResolver(nexus, atlas, logger)
 
-	// ── 4. CONTEXT RESOLVER ───────────────────────────────────────────────────
-	resolver := forgecontext.NewResolver(nexus, atlas, logger)
-
-	// ── 5. EXECUTION ENGINE ───────────────────────────────────────────────────
+	// ── 4. EXECUTION ENGINE ───────────────────────────────────────────────────
 	engine := executor.NewEngine()
 	engine.Register(intent.NewBuildHandler())
 	engine.Register(intent.NewTestHandler())
@@ -86,7 +86,7 @@ func run(logger *log.Logger) error {
 	engine.Register(intent.NewDeployHandler(nexusAddr))
 	logger.Printf("registered intents: %v", engine.RegisteredIntents())
 
-	// ── 6. WORKFLOW STORE (Phase 2) ───────────────────────────────────────────
+	// ── 5. WORKFLOW STORE ────────────────────────────────────────────────────
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
 		return fmt.Errorf("create db dir: %w", err)
 	}
@@ -97,8 +97,12 @@ func run(logger *log.Logger) error {
 	}
 	defer wfStore.Close()
 
-	// ── 7. WORKFLOW EXECUTOR (Phase 2) ────────────────────────────────────────
+	// ── 6. WORKFLOW EXECUTOR ──────────────────────────────────────────────────
 	wfExecutor := workflow.NewExecutor(wfStore, engine, resolver, logger)
+
+	// ── 7. TRIGGER REGISTRY + SUBSCRIBER (Phase 3) ───────────────────────────
+	triggerRegistry   := trigger.NewRegistry(wfStore)
+	triggerSubscriber := trigger.NewSubscriber(nexusAddr, triggerRegistry, wfExecutor, logger)
 
 	// ── 8. HTTP API ───────────────────────────────────────────────────────────
 	apiServer := api.NewServer(api.ServerConfig{
@@ -114,14 +118,27 @@ func run(logger *log.Logger) error {
 	logger.Printf("✓ Forge ready — http=%s nexus=%s atlas=%s db=%s",
 		httpAddr, nexusAddr, atlasAddr, dbPath)
 
-	// ── START + WAIT ──────────────────────────────────────────────────────────
-	errCh := make(chan error, 1)
+	// ── START GOROUTINES ──────────────────────────────────────────────────────
+	var wg sync.WaitGroup
+	errCh := make(chan error, 2)
+
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		if err := apiServer.Run(ctx); err != nil && ctx.Err() == nil {
 			errCh <- fmt.Errorf("api server: %w", err)
 		}
 	}()
 
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := triggerSubscriber.Run(ctx); err != nil && ctx.Err() == nil {
+			errCh <- fmt.Errorf("trigger subscriber: %w", err)
+		}
+	}()
+
+	// ── WAIT FOR SHUTDOWN ─────────────────────────────────────────────────────
 	select {
 	case sig := <-sigCh:
 		logger.Printf("received %s — shutting down", sig)
@@ -130,5 +147,9 @@ func run(logger *log.Logger) error {
 	}
 
 	cancel()
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	<-done
+
 	return nil
 }
