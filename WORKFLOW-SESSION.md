@@ -1,5 +1,5 @@
 # WORKFLOW-SESSION.md
-# @version: 1.4.0
+# @version: 1.5.0
 # @updated: 2026-03-15
 # @repo: https://github.com/Harshmaury/Forge
 
@@ -130,6 +130,7 @@ Full protocol: WORKFLOW-DELIVERY.md
 
 ## CHANGELOG
 
+2026-03-15  v1.5.0  Phase 1 step 5 — intent handlers (build, test, run, deploy) + tests
 2026-03-15  v1.4.0  Phase 1 step 4 — context resolver + tests
 2026-03-15  v1.3.0  Phase 1 step 3 — Nexus + Atlas HTTP clients
 2026-03-15  v1.2.0  Phase 1 step 2 — translator + tests
