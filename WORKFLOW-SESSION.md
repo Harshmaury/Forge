@@ -1,5 +1,5 @@
 # WORKFLOW-SESSION.md
-# @version: 1.9.0
+# @version: 2.0.0
 # @updated: 2026-03-15
 # @repo: https://github.com/Harshmaury/Forge
 
@@ -132,6 +132,7 @@ Full protocol: WORKFLOW-DELIVERY.md
 
 ## CHANGELOG
 
+2026-03-15  v2.0.0  Phase 2 step 2 — workflow model + executor + tests
 2026-03-15  v1.9.0  Phase 2 step 1 — workflow store schema
 2026-03-15  v1.8.0  Phase 1 complete — main.go wired, all 8 steps done
 2026-03-15  v1.7.0  Phase 1 step 7 — API handlers + server
