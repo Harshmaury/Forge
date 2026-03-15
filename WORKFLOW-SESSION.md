@@ -1,5 +1,5 @@
 # WORKFLOW-SESSION.md
-# @version: 1.3.0
+# @version: 1.4.0
 # @updated: 2026-03-15
 # @repo: https://github.com/Harshmaury/Forge
 
@@ -74,7 +74,9 @@ Go:1.23.0  uuid v1.6.0  SQLite(Phase2)  yaml.v3(Phase2)  cobra
   internal/command/translator.go       RawCommandRequest → validated Command
   internal/command/translator_test.go  translation rules
   internal/nexus/client.go              GetProject, GetAllProjects, Ping
-  internal/atlas/client.go              GetProject, GetWorkspaceContext, Ping, UUID generation, context defaults
+  internal/atlas/client.go              GetProject, GetWorkspaceContext, Ping
+  internal/context/resolver.go          ResolveContext, ValidateTarget — graceful degradation
+  internal/context/resolver_test.go     mock clients, all enrichment + degradation cases, UUID generation, context defaults
   Requires: Atlas Phase 1 running
   cmd/forge/main.go             daemon entry point
   internal/command/model.go     Command struct (ADR-004 schema)
@@ -128,6 +130,7 @@ Full protocol: WORKFLOW-DELIVERY.md
 
 ## CHANGELOG
 
+2026-03-15  v1.4.0  Phase 1 step 4 — context resolver + tests
 2026-03-15  v1.3.0  Phase 1 step 3 — Nexus + Atlas HTTP clients
 2026-03-15  v1.2.0  Phase 1 step 2 — translator + tests
 2026-03-15  v1.1.0  Phase 1 step 1 — config, command model, validator
