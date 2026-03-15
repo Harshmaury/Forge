@@ -1,5 +1,5 @@
 # WORKFLOW-SESSION.md
-# @version: 1.1.0
+# @version: 1.2.0
 # @updated: 2026-03-15
 # @repo: https://github.com/Harshmaury/Forge
 
@@ -71,6 +71,8 @@ Go:1.23.0  uuid v1.6.0  SQLite(Phase2)  yaml.v3(Phase2)  cobra
   internal/command/model.go           Command struct (ADR-004), RawCommandRequest, ExecutionResult
   internal/command/validator.go       5-field schema validation
   internal/command/validator_test.go  table-driven tests
+  internal/command/translator.go       RawCommandRequest → validated Command
+  internal/command/translator_test.go  translation rules, UUID generation, context defaults
   Requires: Atlas Phase 1 running
   cmd/forge/main.go             daemon entry point
   internal/command/model.go     Command struct (ADR-004 schema)
@@ -124,5 +126,6 @@ Full protocol: WORKFLOW-DELIVERY.md
 
 ## CHANGELOG
 
+2026-03-15  v1.2.0  Phase 1 step 2 — translator + tests
 2026-03-15  v1.1.0  Phase 1 step 1 — config, command model, validator
 2026-03-15  v1.0.0  Project scaffolded — documentation phase complete
