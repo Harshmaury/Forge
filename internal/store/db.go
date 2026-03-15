@@ -1,7 +1,9 @@
 // @forge-project: forge
 // @forge-path: internal/store/db.go
 // Package store manages the Forge SQLite workflow database.
-// Versioned migrations follow the same pattern as Nexus and Atlas.
+//
+// Phase 2 (migration v1): workflows + workflow_steps
+// Phase 3 (migration v2): triggers
 package store
 
 import (
@@ -15,12 +17,10 @@ import (
 
 // ── STORE ─────────────────────────────────────────────────────────────────────
 
-// Store is the Forge SQLite workflow store.
 type Store struct {
 	db *sql.DB
 }
 
-// New opens or creates the Forge workflow database at dbPath.
 func New(dbPath string) (*Store, error) {
 	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_foreign_keys=on")
 	if err != nil {
@@ -61,7 +61,6 @@ func (s *Store) GetWorkflow(id string) (*Workflow, error) {
 		SELECT id, name, description, trigger, created_at, updated_at
 		FROM workflows WHERE id = ?
 	`, id)
-
 	w := &Workflow{}
 	err := row.Scan(&w.ID, &w.Name, &w.Description, &w.Trigger, &w.CreatedAt, &w.UpdatedAt)
 	if err == sql.ErrNoRows {
@@ -82,7 +81,6 @@ func (s *Store) GetAllWorkflows() ([]*Workflow, error) {
 		return nil, fmt.Errorf("get all workflows: %w", err)
 	}
 	defer rows.Close()
-
 	var workflows []*Workflow
 	for rows.Next() {
 		w := &Workflow{}
@@ -110,7 +108,6 @@ func (s *Store) AddStep(step *WorkflowStep) error {
 	if err != nil {
 		return fmt.Errorf("marshal step parameters: %w", err)
 	}
-
 	_, err = s.db.Exec(`
 		INSERT INTO workflow_steps (workflow_id, position, intent, target, parameters)
 		VALUES (?, ?, ?, ?, ?)
@@ -131,7 +128,6 @@ func (s *Store) GetSteps(workflowID string) ([]*WorkflowStep, error) {
 		return nil, fmt.Errorf("get steps for workflow %s: %w", workflowID, err)
 	}
 	defer rows.Close()
-
 	var steps []*WorkflowStep
 	for rows.Next() {
 		step := &WorkflowStep{}
@@ -150,6 +146,66 @@ func (s *Store) GetSteps(workflowID string) ([]*WorkflowStep, error) {
 
 func (s *Store) DeleteSteps(workflowID string) error {
 	_, err := s.db.Exec(`DELETE FROM workflow_steps WHERE workflow_id = ?`, workflowID)
+	return err
+}
+
+// ── TRIGGERS (PHASE 3) ────────────────────────────────────────────────────────
+
+func (s *Store) CreateTrigger(t *Trigger) error {
+	now := time.Now().UTC()
+	_, err := s.db.Exec(`
+		INSERT INTO triggers (id, event, workflow_id, filter_ext, filter_proj, filter_dir, enabled, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, t.ID, t.Event, t.WorkflowID, t.FilterExt, t.FilterProj, t.FilterDir, t.Enabled, now)
+	if err != nil {
+		return fmt.Errorf("create trigger %s: %w", t.ID, err)
+	}
+	return nil
+}
+
+func (s *Store) GetTrigger(id string) (*Trigger, error) {
+	row := s.db.QueryRow(`
+		SELECT id, event, workflow_id, filter_ext, filter_proj, filter_dir, enabled, created_at
+		FROM triggers WHERE id = ?
+	`, id)
+	t := &Trigger{}
+	err := row.Scan(&t.ID, &t.Event, &t.WorkflowID, &t.FilterExt,
+		&t.FilterProj, &t.FilterDir, &t.Enabled, &t.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get trigger %s: %w", id, err)
+	}
+	return t, nil
+}
+
+func (s *Store) GetAllTriggers() ([]*Trigger, error) {
+	rows, err := s.db.Query(`
+		SELECT id, event, workflow_id, filter_ext, filter_proj, filter_dir, enabled, created_at
+		FROM triggers ORDER BY created_at DESC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("get all triggers: %w", err)
+	}
+	defer rows.Close()
+	return scanTriggers(rows)
+}
+
+func (s *Store) GetEnabledTriggersByEvent(event string) ([]*Trigger, error) {
+	rows, err := s.db.Query(`
+		SELECT id, event, workflow_id, filter_ext, filter_proj, filter_dir, enabled, created_at
+		FROM triggers WHERE event = ? AND enabled = 1
+	`, event)
+	if err != nil {
+		return nil, fmt.Errorf("get triggers for event %s: %w", event, err)
+	}
+	defer rows.Close()
+	return scanTriggers(rows)
+}
+
+func (s *Store) DeleteTrigger(id string) error {
+	_, err := s.db.Exec(`DELETE FROM triggers WHERE id = ?`, id)
 	return err
 }
 
@@ -181,6 +237,21 @@ var allMigrations = []schemaVersion{
 	)`},
 	{1, `CREATE INDEX IF NOT EXISTS idx_steps_workflow ON workflow_steps(workflow_id)`},
 	{1, `CREATE UNIQUE INDEX IF NOT EXISTS idx_steps_position ON workflow_steps(workflow_id, position)`},
+
+	// v2 — automation triggers (Phase 3)
+	{2, `CREATE TABLE IF NOT EXISTS triggers (
+		id          TEXT    PRIMARY KEY,
+		event       TEXT    NOT NULL DEFAULT '',
+		workflow_id TEXT    NOT NULL DEFAULT '',
+		filter_ext  TEXT    NOT NULL DEFAULT '',
+		filter_proj TEXT    NOT NULL DEFAULT '',
+		filter_dir  TEXT    NOT NULL DEFAULT '',
+		enabled     INTEGER NOT NULL DEFAULT 1,
+		created_at  DATETIME NOT NULL,
+		FOREIGN KEY (workflow_id) REFERENCES workflows(id)
+	)`},
+	{2, `CREATE INDEX IF NOT EXISTS idx_triggers_event   ON triggers(event)`},
+	{2, `CREATE INDEX IF NOT EXISTS idx_triggers_enabled ON triggers(enabled)`},
 }
 
 func (s *Store) migrate() error {
@@ -218,4 +289,19 @@ func (s *Store) migrate() error {
 		}
 	}
 	return nil
+}
+
+// ── SCAN HELPERS ─────────────────────────────────────────────────────────────
+
+func scanTriggers(rows *sql.Rows) ([]*Trigger, error) {
+	var triggers []*Trigger
+	for rows.Next() {
+		t := &Trigger{}
+		if err := rows.Scan(&t.ID, &t.Event, &t.WorkflowID, &t.FilterExt,
+			&t.FilterProj, &t.FilterDir, &t.Enabled, &t.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan trigger: %w", err)
+		}
+		triggers = append(triggers, t)
+	}
+	return triggers, rows.Err()
 }
