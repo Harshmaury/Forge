@@ -1,5 +1,11 @@
 // @forge-project: forge
 // @forge-path: internal/workflow/executor.go
+// FG-H-01: ResolveContext called once before the step loop, not per step.
+//   Previously each step called ResolveContext which made up to 3 HTTP
+//   requests (Atlas workspace, Atlas project, Nexus project). For a 5-step
+//   workflow: 15 HTTP calls, all fetching identical data. Now the context
+//   is resolved once with a per-run timeout and reused across all steps.
+//
 // FG-Fix-01: buildCommand now generates a UUID per run via uuid.New().
 //   Previously used fmt.Sprintf("wf-%s-step-%d", workflowID, position)
 //   which produces the same ID every time the same workflow runs —
@@ -23,6 +29,10 @@ import (
 	"github.com/Harshmaury/Forge/internal/executor"
 	"github.com/Harshmaury/Forge/internal/store"
 )
+
+// resolveContextTimeout caps how long context enrichment may block
+// per workflow run. Keeps the step loop responsive under Atlas/Nexus slowness.
+const resolveContextTimeout = 10 * time.Second
 
 // Executor runs workflows step by step using the execution engine.
 type Executor struct {
@@ -71,11 +81,19 @@ func (ex *Executor) Run(
 		StepResults:  make([]*StepResult, 0, len(steps)),
 	}
 
+	// Resolve context once for the entire workflow run (FG-H-01).
+	// All steps share the same target — no need to re-query Atlas/Nexus per step.
+	resolveCtx, resolveCancel := context.WithTimeout(ctx, resolveContextTimeout)
+	probe := ex.buildCommand(steps[0], baseContext) // use first step to probe target
+	enrichedBase := ex.resolver.ResolveContext(resolveCtx, probe)
+	resolveCancel()
+	// Copy enriched context fields back to baseContext for use in all steps.
+	baseContext.WorkspaceRoot = enrichedBase.Context.WorkspaceRoot
+	baseContext.ProjectPath   = enrichedBase.Context.ProjectPath
+	baseContext.Language       = enrichedBase.Context.Language
+
 	for _, step := range steps {
 		cmd := ex.buildCommand(step, baseContext)
-
-		// Enrich context per step.
-		cmd = ex.resolver.ResolveContext(ctx, cmd)
 
 		stepResult := ex.engine.Execute(ctx, cmd)
 		result.StepResults = append(result.StepResults, &StepResult{
