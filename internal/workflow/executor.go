@@ -1,5 +1,10 @@
 // @forge-project: forge
 // @forge-path: internal/workflow/executor.go
+// FG-Fix-01: buildCommand now generates a UUID per run via uuid.New().
+//   Previously used fmt.Sprintf("wf-%s-step-%d", workflowID, position)
+//   which produces the same ID every time the same workflow runs —
+//   breaking tracing, idempotency checks, and ADR-004 uniqueness requirement.
+//
 // WorkflowExecutor runs a stored workflow step by step.
 // Steps share CommandContext from the triggering command.
 // First failure stops the chain — subsequent steps are not executed.
@@ -10,6 +15,8 @@ import (
 	"fmt"
 	"log"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/Harshmaury/Forge/internal/command"
 	forgecontext "github.com/Harshmaury/Forge/internal/context"
@@ -98,13 +105,14 @@ func (ex *Executor) Run(
 }
 
 // buildCommand constructs a Command from a WorkflowStep and base context.
+// FG-Fix-01: uuid.New() generates a unique ID per execution so concurrent
+// runs of the same workflow never produce colliding command IDs.
 func (ex *Executor) buildCommand(
 	step *store.WorkflowStep,
 	baseCtx command.CommandContext,
 ) *command.Command {
-	// Each step gets its own UUID via the base context timestamp offset.
 	return &command.Command{
-		ID:         fmt.Sprintf("wf-%s-step-%d", step.WorkflowID, step.Position),
+		ID:         uuid.New().String(),
 		Intent:     step.Intent,
 		Target:     step.Target,
 		Parameters: step.Parameters,

@@ -1,13 +1,20 @@
 // @forge-project: forge
 // @forge-path: internal/trigger/subscriber.go
+// FG-Fix-02: dispatch now uses a bounded semaphore to cap concurrent
+//   workflow goroutines. Previously each matched trigger spawned an
+//   unbounded goroutine — a git checkout touching many files could fire
+//   50+ concurrent build/test processes (fork bomb under load).
+//
+//   A buffered channel of size maxConcurrentWorkflows acts as a semaphore:
+//   acquiring a slot (send) before launching, releasing (recv) on completion.
+//   If all slots are taken the trigger is dropped and logged — workflows
+//   are best-effort automation, not guaranteed delivery.
+//
 // Subscriber polls the Nexus events API for workspace events and
 // fires matching workflows via the workflow executor.
 //
 // Polling pattern mirrors Atlas internal/nexus/subscriber.go (ADR-007):
 //   GET /events?limit=50&since=<last_id> every 3 seconds.
-//
-// Execution is asynchronous — the subscriber never blocks waiting for
-// a workflow to complete. Each matched trigger fires in its own goroutine.
 //
 // Import rule: topic constants imported from pkg/events only (ADR-007).
 package trigger
@@ -29,8 +36,13 @@ import (
 // ── CONSTANTS ─────────────────────────────────────────────────────────────────
 
 const (
-	pollInterval   = 3 * time.Second
-	pollEventLimit = 50
+	pollInterval            = 3 * time.Second
+	pollEventLimit          = 50
+
+	// maxConcurrentWorkflows caps the number of workflow goroutines running
+	// simultaneously. Prevents a burst of workspace events from spawning
+	// an unbounded number of build/test processes.
+	maxConcurrentWorkflows = 8
 )
 
 // ── NEXUS CLIENT INTERFACE ────────────────────────────────────────────────────
@@ -52,12 +64,13 @@ type RawEvent struct {
 
 // Subscriber polls Nexus for workspace events and fires matching workflows.
 type Subscriber struct {
-	nexusAddr string
+	nexusAddr  string
 	httpClient *http.Client
-	registry  *Registry
-	executor  *workflow.Executor
-	logger    *log.Logger
-	lastID    int64
+	registry   *Registry
+	executor   *workflow.Executor
+	logger     *log.Logger
+	lastID     int64
+	sem        chan struct{} // bounded semaphore — FG-Fix-02
 }
 
 // NewSubscriber creates a Subscriber.
@@ -73,6 +86,7 @@ func NewSubscriber(
 		registry:   registry,
 		executor:   executor,
 		logger:     logger,
+		sem:        make(chan struct{}, maxConcurrentWorkflows),
 	}
 }
 
@@ -160,7 +174,18 @@ func (s *Subscriber) dispatch(
 
 	for _, t := range triggers {
 		t := t // capture for goroutine
+		// Try to acquire a semaphore slot. If all slots are taken, drop this
+		// trigger rather than spawning an unbounded goroutine (FG-Fix-02).
+		select {
+		case s.sem <- struct{}{}:
+			// slot acquired — proceed
+		default:
+			s.logger.Printf("WARNING: trigger %s dropped — max concurrent workflows (%d) reached",
+				t.ID, maxConcurrentWorkflows)
+			continue
+		}
 		go func() {
+			defer func() { <-s.sem }() // release slot on completion
 			baseCtx := command.CommandContext{
 				WorkspaceRoot:   payload.Path,
 				RequestingAgent: "trigger",

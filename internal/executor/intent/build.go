@@ -1,5 +1,10 @@
 // @forge-project: forge
 // @forge-path: internal/executor/intent/build.go
+// FG-Fix-03: args construction logic corrected.
+//   Previously append ran unconditionally (appending "" when args is empty)
+//   then the result was discarded by the conditional. The empty string was
+//   passed to exec.CommandContext as a trailing argument on the first path.
+//   Now extra args are only appended when non-empty.
 package intent
 
 import (
@@ -49,10 +54,11 @@ func (h *BuildHandler) Execute(ctx context.Context, cmd *command.Command) *Resul
 		return result
 	}
 
-	// Allow caller to pass extra args via parameters.
-	args := append(buildCmd[1:], cmd.Parameters["args"])
-	if cmd.Parameters["args"] == "" {
-		args = buildCmd[1:]
+	// Allow caller to pass extra args via parameters (FG-Fix-03).
+	// Check first, append only when non-empty — never pass a trailing "".
+	args := buildCmd[1:]
+	if extra := cmd.Parameters["args"]; extra != "" {
+		args = append(buildCmd[1:], extra)
 	}
 
 	//nolint:gosec — command and args are from a trusted allowlist

@@ -1,6 +1,6 @@
 # WORKFLOW-SESSION.md
-# @version: 2.5.0
-# @updated: 2026-03-15
+# @version: 2.6.0
+# @updated: 2026-03-16
 # @repo: https://github.com/Harshmaury/Forge
 
 ---
@@ -108,6 +108,17 @@ Go:1.23.0  uuid v1.6.0  SQLite(Phase2)  yaml.v3(Phase2)  cobra
 
 ---
 
+## CRITICAL FIXES
+
+✅ FG-Fix-01  Unique command IDs per workflow run (uuid.New) (2026-03-16)
+✅ FG-Fix-02  Bounded goroutine pool (semaphore, max 8) (2026-03-16)
+✅ FG-Fix-03  build.go args: check before append (2026-03-16)
+  internal/workflow/executor.go        uuid.New().String() for cmd.ID
+  internal/trigger/subscriber.go       sem chan struct{} semaphore
+  internal/executor/intent/build.go    args logic corrected
+
+## FORGE CRITICALS — ALL COMPLETE ✅
+
 ## DELIVERY PATTERN
 
 Zip naming:  forge-<phase>-<what>-<YYYYMMDD>-<HHMM>.zip
@@ -138,6 +149,7 @@ Full protocol: WORKFLOW-DELIVERY.md
 
 ## CHANGELOG
 
+2026-03-16  v2.6.0  fix: FG-Fix-01+02+03 — unique cmd IDs, bounded goroutines, args fix
 2026-03-15  v2.5.0  Phase 3 complete — trigger API, subscriber wired, smoke test
 2026-03-15  v2.4.0  Phase 3 step 3 — trigger subscriber + tests
 2026-03-15  v2.3.0  Phase 3 step 2 — trigger model, registry, filter matching + tests
