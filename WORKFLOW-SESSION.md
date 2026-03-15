@@ -1,5 +1,5 @@
 # WORKFLOW-SESSION.md
-# @version: 2.3.0
+# @version: 2.4.0
 # @updated: 2026-03-15
 # @repo: https://github.com/Harshmaury/Forge
 
@@ -138,6 +138,7 @@ Full protocol: WORKFLOW-DELIVERY.md
 
 ## CHANGELOG
 
+2026-03-15  v2.4.0  Phase 3 step 3 — trigger subscriber + tests
 2026-03-15  v2.3.0  Phase 3 step 2 — trigger model, registry, filter matching + tests
 2026-03-15  v2.2.0  Phase 3 step 1 — trigger store schema
 2026-03-15  v2.1.0  Phase 2 complete — workflow API, store wired, smoke test
