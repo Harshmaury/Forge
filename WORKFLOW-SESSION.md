@@ -1,5 +1,5 @@
 # WORKFLOW-SESSION.md
-# @version: 1.6.0
+# @version: 1.7.0
 # @updated: 2026-03-15
 # @repo: https://github.com/Harshmaury/Forge
 
@@ -130,6 +130,7 @@ Full protocol: WORKFLOW-DELIVERY.md
 
 ## CHANGELOG
 
+2026-03-15  v1.7.0  Phase 1 step 7 — API handlers + server
 2026-03-15  v1.6.0  Phase 1 step 6 — execution engine + tests
 2026-03-15  v1.5.0  Phase 1 step 5 — intent handlers (build, test, run, deploy) + tests
 2026-03-15  v1.4.0  Phase 1 step 4 — context resolver + tests
