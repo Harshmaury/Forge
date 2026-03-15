@@ -1,6 +1,12 @@
 // @forge-project: forge
 // @forge-path: internal/api/server.go
 // Forge HTTP API server on 127.0.0.1:8082 (ADR-003).
+//
+// Phase 2 additions:
+//   POST /workflows          create workflow
+//   GET  /workflows          list workflows
+//   GET  /workflows/:id      get workflow + steps
+//   POST /workflows/:id/run  execute workflow
 package api
 
 import (
@@ -14,15 +20,19 @@ import (
 	forgecontext "github.com/Harshmaury/Forge/internal/context"
 	"github.com/Harshmaury/Forge/internal/command"
 	"github.com/Harshmaury/Forge/internal/executor"
+	"github.com/Harshmaury/Forge/internal/store"
+	"github.com/Harshmaury/Forge/internal/workflow"
 )
 
 // ServerConfig holds all dependencies for the Forge HTTP server.
 type ServerConfig struct {
-	Addr       string
-	Translator *command.Translator
-	Resolver   *forgecontext.Resolver
-	Engine     *executor.Engine
-	Logger     *log.Logger
+	Addr             string
+	Translator       *command.Translator
+	Resolver         *forgecontext.Resolver
+	Engine           *executor.Engine
+	Store            store.Storer          // Phase 2 — nil-safe, workflow routes disabled if nil
+	WorkflowExecutor *workflow.Executor    // Phase 2
+	Logger           *log.Logger
 }
 
 // Server is the Forge HTTP server.
@@ -31,7 +41,7 @@ type Server struct {
 	logger *log.Logger
 }
 
-// NewServer creates the Forge HTTP server and registers all Phase 1 routes.
+// NewServer creates the Forge HTTP server and registers all routes.
 func NewServer(cfg ServerConfig) *Server {
 	logger := cfg.Logger
 	if logger == nil {
@@ -44,9 +54,18 @@ func NewServer(cfg ServerConfig) *Server {
 	mux := http.NewServeMux()
 
 	// Phase 1 routes.
-	mux.HandleFunc("GET /health",       handleHealth)
-	mux.HandleFunc("POST /commands",    commandH.Submit)
-	mux.HandleFunc("GET /intents",      intentsH.List)
+	mux.HandleFunc("GET /health",    handleHealth)
+	mux.HandleFunc("POST /commands", commandH.Submit)
+	mux.HandleFunc("GET /intents",   intentsH.List)
+
+	// Phase 2 routes — only if store and executor are wired.
+	if cfg.Store != nil && cfg.WorkflowExecutor != nil {
+		wfH := handler.NewWorkflowHandler(cfg.Store, cfg.WorkflowExecutor, cfg.Resolver)
+		mux.HandleFunc("POST /workflows",            wfH.Create)
+		mux.HandleFunc("GET /workflows",             wfH.List)
+		mux.HandleFunc("GET /workflows/{id}",        wfH.Get)
+		mux.HandleFunc("POST /workflows/{id}/run",   wfH.Run)
+	}
 
 	return &Server{
 		http: &http.Server{

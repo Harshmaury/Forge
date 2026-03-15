@@ -1,5 +1,5 @@
 # WORKFLOW-SESSION.md
-# @version: 2.0.0
+# @version: 2.1.0
 # @updated: 2026-03-15
 # @repo: https://github.com/Harshmaury/Forge
 
@@ -89,7 +89,7 @@ Go:1.23.0  uuid v1.6.0  SQLite(Phase2)  yaml.v3(Phase2)  cobra
   internal/atlas/client.go      Atlas HTTP client
   internal/api/server.go        HTTP server on :8082
 
-### 🔄 Phase 2 — Workflow Definitions (IN PROGRESS)
+### ✅ Phase 2 — Workflow Definitions (COMPLETE)
   internal/store/storer.go   Workflow + WorkflowStep types, 7 interface methods
   internal/store/db.go       SQLite v1 — workflows + workflow_steps tables
   Requires: Phase 1 complete
@@ -132,6 +132,7 @@ Full protocol: WORKFLOW-DELIVERY.md
 
 ## CHANGELOG
 
+2026-03-15  v2.1.0  Phase 2 complete — workflow API, store wired, smoke test
 2026-03-15  v2.0.0  Phase 2 step 2 — workflow model + executor + tests
 2026-03-15  v1.9.0  Phase 2 step 1 — workflow store schema
 2026-03-15  v1.8.0  Phase 1 complete — main.go wired, all 8 steps done
