@@ -228,6 +228,64 @@ func (s *Store) DeleteTrigger(id string) error {
 	return err
 }
 
+// ── EXECUTION HISTORY (PHASE 4) ───────────────────────────────────────────────
+
+// LogExecution persists an execution record to the history table.
+func (s *Store) LogExecution(r *ExecutionRecord) error {
+	_, err := s.db.Exec(`
+		INSERT INTO execution_history
+			(id, command_id, intent, target, trace_id, status, output, error, duration_ms, started_at, finished_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, r.ID, r.CommandID, r.Intent, r.Target, r.TraceID,
+		r.Status, r.Output, r.Error, r.DurationMS, r.StartedAt, r.FinishedAt)
+	if err != nil {
+		return fmt.Errorf("log execution %s: %w", r.ID, err)
+	}
+	return nil
+}
+
+// GetHistory returns the N most recent execution records.
+func (s *Store) GetHistory(limit int) ([]*ExecutionRecord, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := s.db.Query(`
+		SELECT id, command_id, intent, target, trace_id, status, output, error, duration_ms, started_at, finished_at
+		FROM execution_history ORDER BY started_at DESC LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("get history: %w", err)
+	}
+	defer rows.Close()
+	return scanHistory(rows)
+}
+
+// GetHistoryByTrace returns all execution records for a given trace ID.
+func (s *Store) GetHistoryByTrace(traceID string) ([]*ExecutionRecord, error) {
+	rows, err := s.db.Query(`
+		SELECT id, command_id, intent, target, trace_id, status, output, error, duration_ms, started_at, finished_at
+		FROM execution_history WHERE trace_id = ? ORDER BY started_at ASC
+	`, traceID)
+	if err != nil {
+		return nil, fmt.Errorf("get history by trace %s: %w", traceID, err)
+	}
+	defer rows.Close()
+	return scanHistory(rows)
+}
+
+func scanHistory(rows *sql.Rows) ([]*ExecutionRecord, error) {
+	var records []*ExecutionRecord
+	for rows.Next() {
+		r := &ExecutionRecord{}
+		if err := rows.Scan(&r.ID, &r.CommandID, &r.Intent, &r.Target, &r.TraceID,
+			&r.Status, &r.Output, &r.Error, &r.DurationMS, &r.StartedAt, &r.FinishedAt); err != nil {
+			return nil, fmt.Errorf("scan history: %w", err)
+		}
+		records = append(records, r)
+	}
+	return records, rows.Err()
+}
+
 // ── MIGRATIONS ────────────────────────────────────────────────────────────────
 
 type schemaVersion struct {
@@ -271,6 +329,24 @@ var allMigrations = []schemaVersion{
 	)`},
 	{2, `CREATE INDEX IF NOT EXISTS idx_triggers_event   ON triggers(event)`},
 	{2, `CREATE INDEX IF NOT EXISTS idx_triggers_enabled ON triggers(enabled)`},
+
+	// v3 — execution history (Phase 4 / ADR-010)
+	{3, `CREATE TABLE IF NOT EXISTS execution_history (
+		id          TEXT     PRIMARY KEY,
+		command_id  TEXT     NOT NULL DEFAULT '',
+		intent      TEXT     NOT NULL DEFAULT '',
+		target      TEXT     NOT NULL DEFAULT '',
+		trace_id    TEXT     NOT NULL DEFAULT '',
+		status      TEXT     NOT NULL DEFAULT '',
+		output      TEXT     NOT NULL DEFAULT '',
+		error       TEXT     NOT NULL DEFAULT '',
+		duration_ms INTEGER  NOT NULL DEFAULT 0,
+		started_at  DATETIME NOT NULL,
+		finished_at DATETIME NOT NULL
+	)`},
+	{3, `CREATE INDEX IF NOT EXISTS idx_history_trace   ON execution_history(trace_id)`},
+	{3, `CREATE INDEX IF NOT EXISTS idx_history_target  ON execution_history(target)`},
+	{3, `CREATE INDEX IF NOT EXISTS idx_history_started ON execution_history(started_at)`},
 }
 
 func (s *Store) migrate() error {

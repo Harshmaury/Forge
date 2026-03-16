@@ -38,6 +38,7 @@ import (
 	"github.com/Harshmaury/Forge/internal/executor"
 	"github.com/Harshmaury/Forge/internal/executor/intent"
 	nexusclient "github.com/Harshmaury/Forge/internal/nexus"
+	"github.com/Harshmaury/Forge/internal/preflight"
 	"github.com/Harshmaury/Forge/internal/store"
 	"github.com/Harshmaury/Forge/internal/trigger"
 	"github.com/Harshmaury/Forge/internal/workflow"
@@ -116,7 +117,10 @@ func run(logger *log.Logger) error {
 	triggerRegistry   := trigger.NewRegistry(wfStore)
 	triggerSubscriber := trigger.NewSubscriber(nexusAddr, triggerRegistry, wfExecutor, logger, serviceToken)
 
-	// ── 8. HTTP API ───────────────────────────────────────────────────────────
+	// ── 8. PREFLIGHT CHECKER (Phase 4 / ADR-010) ──────────────────────────────
+	checker := preflight.NewChecker(atlas, logger)
+
+	// ── 9. HTTP API ───────────────────────────────────────────────────────────
 	apiServer := api.NewServer(api.ServerConfig{
 		Addr:             httpAddr,
 		Translator:       translator,
@@ -124,6 +128,7 @@ func run(logger *log.Logger) error {
 		Engine:           engine,
 		Store:            wfStore,
 		WorkflowExecutor: wfExecutor,
+		Checker:          checker,
 		Logger:           logger,
 	})
 

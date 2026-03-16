@@ -5,6 +5,7 @@
 // Phase 1: POST /commands, GET /intents, GET /health
 // Phase 2: POST/GET /workflows, GET /workflows/:id, POST /workflows/:id/run
 // Phase 3: POST/GET /triggers, DELETE /triggers/:id
+// Phase 4: GET /history, GET /history/:trace_id, TraceID middleware (ADR-010)
 package api
 
 import (
@@ -15,9 +16,11 @@ import (
 	"time"
 
 	"github.com/Harshmaury/Forge/internal/api/handler"
+	"github.com/Harshmaury/Forge/internal/api/middleware"
 	forgecontext "github.com/Harshmaury/Forge/internal/context"
 	"github.com/Harshmaury/Forge/internal/command"
 	"github.com/Harshmaury/Forge/internal/executor"
+	"github.com/Harshmaury/Forge/internal/preflight"
 	"github.com/Harshmaury/Forge/internal/store"
 	"github.com/Harshmaury/Forge/internal/workflow"
 )
@@ -30,6 +33,7 @@ type ServerConfig struct {
 	Engine           *executor.Engine
 	Store            store.Storer
 	WorkflowExecutor *workflow.Executor
+	Checker          *preflight.Checker // Phase 4: nil = preflight disabled
 	Logger           *log.Logger
 }
 
@@ -46,7 +50,11 @@ func NewServer(cfg ServerConfig) *Server {
 		logger = log.Default()
 	}
 
-	commandH := handler.NewCommandHandler(cfg.Translator, cfg.Resolver, cfg.Engine)
+	// Phase 4: CommandHandler now takes checker + store for preflight + history.
+	commandH := handler.NewCommandHandler(
+		cfg.Translator, cfg.Resolver, cfg.Engine,
+		cfg.Checker, cfg.Store,
+	)
 	intentsH := handler.NewIntentsHandler(cfg.Engine)
 
 	mux := http.NewServeMux()
@@ -56,10 +64,11 @@ func NewServer(cfg ServerConfig) *Server {
 	mux.HandleFunc("POST /commands", commandH.Submit)
 	mux.HandleFunc("GET /intents",   intentsH.List)
 
-	// Phase 2 + 3 routes — only if store is wired.
+	// Phase 2 + 3 + 4 routes — only if store is wired.
 	if cfg.Store != nil && cfg.WorkflowExecutor != nil {
 		wfH      := handler.NewWorkflowHandler(cfg.Store, cfg.WorkflowExecutor, cfg.Resolver)
 		triggerH := handler.NewTriggerHandler(cfg.Store)
+		historyH := handler.NewHistoryHandler(cfg.Store)
 
 		// Phase 2
 		mux.HandleFunc("POST /workflows",          wfH.Create)
@@ -71,12 +80,19 @@ func NewServer(cfg ServerConfig) *Server {
 		mux.HandleFunc("POST /triggers",            triggerH.Create)
 		mux.HandleFunc("GET /triggers",             triggerH.List)
 		mux.HandleFunc("DELETE /triggers/{id}",     triggerH.Delete)
+
+		// Phase 4 — execution history
+		mux.HandleFunc("GET /history",                    historyH.List)
+		mux.HandleFunc("GET /history/{trace_id}",         historyH.ByTrace)
 	}
+
+	var h http.Handler = mux
+	h = middleware.TraceID(h) // Phase 4: X-Trace-ID propagation
 
 	return &Server{
 		http: &http.Server{
 			Addr:         cfg.Addr,
-			Handler:      mux,
+			Handler:      h,
 			ReadTimeout:  15 * time.Second,
 			WriteTimeout: 30 * time.Second,
 			IdleTimeout:  60 * time.Second,

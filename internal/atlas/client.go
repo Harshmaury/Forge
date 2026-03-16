@@ -20,14 +20,18 @@ const defaultTimeout = 10 * time.Second
 
 // ── TYPES ─────────────────────────────────────────────────────────────────────
 
-// ProjectDetail is the project record returned by GET /workspace/project/:id.
+// ProjectDetail is the project record returned by Atlas endpoints.
+// Phase 4: includes Status, Capabilities, DependsOn from ADR-009 contract.
 type ProjectDetail struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Path     string `json:"path"`
-	Language string `json:"language"`
-	Type     string `json:"type"`
-	Source   string `json:"source"`
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	Path         string   `json:"path"`
+	Language     string   `json:"language"`
+	Type         string   `json:"type"`
+	Source       string   `json:"source"`
+	Status       string   `json:"status"`
+	Capabilities []string `json:"capabilities"`
+	DependsOn    []string `json:"depends_on"`
 }
 
 // WorkspaceContext is the workspace snapshot returned by GET /workspace/context.
@@ -120,6 +124,33 @@ func (c *Client) GetProject(ctx context.Context, id string) (*ProjectDetail, err
 		return nil, fmt.Errorf("atlas: API returned ok=false for project %s", id)
 	}
 	return envelope.Data.Project, nil
+}
+
+// GetVerifiedServices fetches verified projects from Atlas GET /graph/services.
+// Phase 4 (ADR-010): used by preflight.Checker for pre-execution validation.
+// Returns only projects with status=verified — the stable contract endpoint.
+func (c *Client) GetVerifiedServices(ctx context.Context) ([]*ProjectDetail, error) {
+	resp, err := c.get(ctx, "/graph/services")
+	if err != nil {
+		return nil, fmt.Errorf("atlas: GET /graph/services: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("atlas: GET /graph/services: HTTP %d", resp.StatusCode)
+	}
+
+	var envelope struct {
+		OK   bool             `json:"ok"`
+		Data []*ProjectDetail `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		return nil, fmt.Errorf("atlas: decode /graph/services: %w", err)
+	}
+	if !envelope.OK {
+		return nil, fmt.Errorf("atlas: /graph/services returned ok=false")
+	}
+	return envelope.Data, nil
 }
 
 // GetWorkspaceContext fetches the full workspace context snapshot.

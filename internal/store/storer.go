@@ -49,6 +49,23 @@ type Trigger struct {
 	CreatedAt  time.Time
 }
 
+// ── PHASE 4 TYPES ─────────────────────────────────────────────────────────────
+
+// ExecutionRecord is a persisted record of a command execution (ADR-010).
+type ExecutionRecord struct {
+	ID         string    // UUID
+	CommandID  string    // Command.ID
+	Intent     string
+	Target     string
+	TraceID    string
+	Status     string    // "success" | "failure" | "denied"
+	Output     string
+	Error      string
+	DurationMS int64
+	StartedAt  time.Time
+	FinishedAt time.Time
+}
+
 // ── STORER INTERFACE ──────────────────────────────────────────────────────────
 
 // Storer is the Forge workflow store contract.
@@ -63,7 +80,6 @@ type Storer interface {
 	DeleteWorkflow(id string) error
 
 	// WithWorkflowTransaction executes fn inside a SQLite transaction.
-	// Used by WorkflowHandler.Create for atomic workflow+steps creation.
 	WithWorkflowTransaction(fn func() error) error
 
 	// ── Steps (Phase 2) ────────────────────────────────────────
@@ -77,4 +93,9 @@ type Storer interface {
 	GetAllTriggers() ([]*Trigger, error)
 	GetEnabledTriggersByEvent(event string) ([]*Trigger, error)
 	DeleteTrigger(id string) error
+
+	// ── Execution history (Phase 4 / ADR-010) ──────────────────
+	LogExecution(r *ExecutionRecord) error
+	GetHistory(limit int) ([]*ExecutionRecord, error)
+	GetHistoryByTrace(traceID string) ([]*ExecutionRecord, error)
 }
