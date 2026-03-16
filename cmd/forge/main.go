@@ -1,5 +1,7 @@
 // @forge-project: forge
 // @forge-path: cmd/forge/main.go
+// ADR-008: FORGE_SERVICE_TOKEN env var wired into Nexus and Atlas clients.
+//
 // FG-H-05: workspaceRoot now read from FORGE_WORKSPACE env var.
 //   Previously hardcoded to ~/workspace — inconsistent with Atlas
 //   (ATLAS_WORKSPACE) and Nexus (NEXUS_WORKSPACE). Each service
@@ -59,14 +61,19 @@ func run(logger *log.Logger) error {
 	atlasAddr     := config.EnvOrDefault("ATLAS_HTTP_ADDR", config.DefaultAtlasAddr)
 	dbPath        := config.ExpandHome(config.EnvOrDefault("FORGE_DB_PATH", "~/.nexus/forge.db"))
 	workspaceRoot := config.ExpandHome(config.EnvOrDefault("FORGE_WORKSPACE", "~/workspace"))
+	// ADR-008: outbound token for all Nexus and Atlas calls.
+	serviceToken  := config.EnvOrDefault("FORGE_SERVICE_TOKEN", "")
+	if serviceToken == "" {
+		logger.Println("WARNING: FORGE_SERVICE_TOKEN not set — inter-service auth disabled")
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	// ── 2. HTTP CLIENTS ───────────────────────────────────────────────────────
-	nexus := nexusclient.New(nexusAddr)
-	atlas := atlasclient.New(atlasAddr)
+	nexus := nexusclient.New(nexusAddr).WithServiceToken(serviceToken)
+	atlas := atlasclient.New(atlasAddr).WithServiceToken(serviceToken)
 
 	if err := nexus.Ping(ctx); err != nil {
 		logger.Printf("WARNING: Nexus not reachable at %s: %v", nexusAddr, err)

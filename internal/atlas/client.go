@@ -1,5 +1,7 @@
 // @forge-project: forge
 // @forge-path: internal/atlas/client.go
+// ADR-008: serviceToken field + get() helper inject X-Service-Token on all
+// outbound requests except /health.
 // Package atlas provides an HTTP client for querying the Atlas knowledge API.
 // Forge reads workspace context from Atlas to enrich command objects.
 // Atlas is read-only — Forge never modifies Atlas indexes.
@@ -41,8 +43,9 @@ type WorkspaceContext struct {
 
 // Client queries the Atlas HTTP API.
 type Client struct {
-	baseURL    string
-	httpClient *http.Client
+	baseURL      string
+	httpClient   *http.Client
+	serviceToken string // ADR-008
 }
 
 // New creates an Atlas Client.
@@ -51,6 +54,24 @@ func New(atlasAddr string) *Client {
 		baseURL:    atlasAddr,
 		httpClient: &http.Client{Timeout: defaultTimeout},
 	}
+}
+
+// WithServiceToken sets the X-Service-Token header for ADR-008 inter-service auth.
+func (c *Client) WithServiceToken(token string) *Client {
+	c.serviceToken = token
+	return c
+}
+
+// get is an authenticated GET helper — adds X-Service-Token on non-health paths.
+func (c *Client) get(ctx context.Context, path string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.serviceToken != "" && path != "/health" {
+		req.Header.Set("X-Service-Token", c.serviceToken) // ADR-008
+	}
+	return c.httpClient.Do(req)
 }
 
 // Ping checks whether the Atlas service is reachable.
@@ -73,13 +94,7 @@ func (c *Client) Ping(ctx context.Context) error {
 // GetProject fetches project detail from the Atlas workspace index.
 // Returns nil, nil if the project is not indexed.
 func (c *Client) GetProject(ctx context.Context, id string) (*ProjectDetail, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		c.baseURL+"/workspace/project/"+id, nil)
-	if err != nil {
-		return nil, fmt.Errorf("atlas: build request: %w", err)
-	}
-
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.get(ctx, "/workspace/project/"+id)
 	if err != nil {
 		return nil, fmt.Errorf("atlas: GET /workspace/project/%s: %w", id, err)
 	}
@@ -110,13 +125,7 @@ func (c *Client) GetProject(ctx context.Context, id string) (*ProjectDetail, err
 // GetWorkspaceContext fetches the full workspace context snapshot.
 // Used to populate command context when not supplied by the caller.
 func (c *Client) GetWorkspaceContext(ctx context.Context) (*WorkspaceContext, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		c.baseURL+"/workspace/context", nil)
-	if err != nil {
-		return nil, fmt.Errorf("atlas: build request: %w", err)
-	}
-
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.get(ctx, "/workspace/context")
 	if err != nil {
 		return nil, fmt.Errorf("atlas: GET /workspace/context: %w", err)
 	}

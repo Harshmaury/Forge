@@ -1,5 +1,7 @@
 // @forge-project: forge
 // @forge-path: internal/nexus/client.go
+// ADR-008: serviceToken field + get() helper inject X-Service-Token on all
+// outbound requests except /health.
 // Package nexus provides an HTTP client for querying the Nexus API.
 // Forge reads project and service state from Nexus — it never writes.
 // ADR-001: Nexus is the canonical project registry.
@@ -31,8 +33,9 @@ type Project struct {
 
 // Client queries the Nexus HTTP API.
 type Client struct {
-	baseURL    string
-	httpClient *http.Client
+	baseURL      string
+	httpClient   *http.Client
+	serviceToken string // ADR-008
 }
 
 // New creates a Nexus Client.
@@ -41,6 +44,24 @@ func New(nexusAddr string) *Client {
 		baseURL:    nexusAddr,
 		httpClient: &http.Client{Timeout: defaultTimeout},
 	}
+}
+
+// WithServiceToken sets the X-Service-Token header for ADR-008 inter-service auth.
+func (c *Client) WithServiceToken(token string) *Client {
+	c.serviceToken = token
+	return c
+}
+
+// get is an authenticated GET helper — adds X-Service-Token on non-health paths.
+func (c *Client) get(ctx context.Context, path string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.serviceToken != "" && path != "/health" {
+		req.Header.Set("X-Service-Token", c.serviceToken) // ADR-008
+	}
+	return c.httpClient.Do(req)
 }
 
 // Ping checks whether the Nexus daemon is reachable.
@@ -63,13 +84,7 @@ func (c *Client) Ping(ctx context.Context) error {
 // GetProject fetches a single project by ID from the Nexus registry.
 // Returns nil, nil when the project is not found (404).
 func (c *Client) GetProject(ctx context.Context, id string) (*Project, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		c.baseURL+"/projects/"+id, nil)
-	if err != nil {
-		return nil, fmt.Errorf("nexus: build request: %w", err)
-	}
-
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.get(ctx, "/projects/"+id)
 	if err != nil {
 		return nil, fmt.Errorf("nexus: GET /projects/%s: %w", id, err)
 	}
@@ -102,13 +117,7 @@ func (c *Client) GetProject(ctx context.Context, id string) (*Project, error) {
 
 // GetAllProjects fetches all projects from the Nexus registry.
 func (c *Client) GetAllProjects(ctx context.Context) ([]*Project, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		c.baseURL+"/projects", nil)
-	if err != nil {
-		return nil, fmt.Errorf("nexus: build request: %w", err)
-	}
-
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.get(ctx, "/projects")
 	if err != nil {
 		return nil, fmt.Errorf("nexus: GET /projects: %w", err)
 	}
