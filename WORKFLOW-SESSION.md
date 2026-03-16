@@ -1,5 +1,5 @@
 # WORKFLOW-SESSION.md
-# @version: 2.8.0
+# @version: 2.7.0
 # @updated: 2026-03-16
 # @repo: https://github.com/Harshmaury/Forge
 
@@ -130,12 +130,6 @@ Go:1.23.0  uuid v1.6.0  SQLite(Phase2)  yaml.v3(Phase2)  cobra
 
 ## FORGE HIGHS — ALL COMPLETE ✅
 
-## ADR-008 IMPLEMENTATION
-
-✅ internal/nexus/client.go  WithServiceToken + get() helper
-✅ internal/atlas/client.go  WithServiceToken + get() helper
-✅ cmd/forge/main.go         FORGE_SERVICE_TOKEN env var
-
 ## DELIVERY PATTERN
 
 Zip naming:  forge-<phase>-<what>-<YYYYMMDD>-<HHMM>.zip
@@ -168,7 +162,6 @@ Full protocol: WORKFLOW-DELIVERY.md
 
 2026-03-16  v2.6.0  fix: FG-Fix-01+02+03 — unique cmd IDs, bounded goroutines, args fix
 2026-03-16  v2.7.0  fix: FG-H-01~06 — resolve-once, type-safe events, atomic create, status codes, env, topic type
-2026-03-16  v2.8.0  feat: ADR-008 — inter-service auth, outbound token on Nexus + Atlas clients
 2026-03-15  v2.5.0  Phase 3 complete — trigger API, subscriber wired, smoke test
 2026-03-15  v2.4.0  Phase 3 step 3 — trigger subscriber + tests
 2026-03-15  v2.3.0  Phase 3 step 2 — trigger model, registry, filter matching + tests

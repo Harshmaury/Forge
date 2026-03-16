@@ -1,11 +1,5 @@
 // @forge-project: forge
 // @forge-path: internal/trigger/subscriber.go
-// FG-H-02: SupportedEvents lookup uses nexusevents.Topic type consistently.
-//   e.Type from JSON is a raw string; the map key is nexusevents.Topic
-//   (a named string type). Previously the lookup was type-unsafe — if
-//   topic constant string values changed, the lookup silently failed.
-//   Now e.Type is cast to nexusevents.Topic before the lookup.
-//
 // FG-Fix-02: dispatch now uses a bounded semaphore to cap concurrent
 //   workflow goroutines. Previously each matched trigger spawned an
 //   unbounded goroutine — a git checkout touching many files could fire
@@ -76,23 +70,26 @@ type Subscriber struct {
 	executor   *workflow.Executor
 	logger     *log.Logger
 	lastID     int64
-	sem        chan struct{} // bounded semaphore — FG-Fix-02
+	sem         chan struct{} // bounded semaphore — FG-Fix-02
+	serviceToken string       // ADR-008: X-Service-Token for Nexus calls
 }
 
 // NewSubscriber creates a Subscriber.
 func NewSubscriber(
-	nexusAddr string,
-	registry *Registry,
-	executor *workflow.Executor,
-	logger *log.Logger,
+	nexusAddr    string,
+	registry     *Registry,
+	executor     *workflow.Executor,
+	logger       *log.Logger,
+	serviceToken string, // ADR-008
 ) *Subscriber {
 	return &Subscriber{
-		nexusAddr:  nexusAddr,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
-		registry:   registry,
-		executor:   executor,
-		logger:     logger,
-		sem:        make(chan struct{}, maxConcurrentWorkflows),
+		nexusAddr:    nexusAddr,
+		httpClient:   &http.Client{Timeout: 10 * time.Second},
+		registry:     registry,
+		executor:     executor,
+		logger:       logger,
+		sem:          make(chan struct{}, maxConcurrentWorkflows),
+		serviceToken: serviceToken,
 	}
 }
 
@@ -123,6 +120,9 @@ func (s *Subscriber) poll(ctx context.Context) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return
+	}
+	if s.serviceToken != "" {
+		req.Header.Set("X-Service-Token", s.serviceToken) // ADR-008
 	}
 
 	resp, err := s.httpClient.Do(req)
@@ -157,8 +157,7 @@ func (s *Subscriber) poll(ctx context.Context) {
 		}
 
 		// Only process workspace topics (ADR-007).
-		// FG-H-02: cast to nexusevents.Topic for type-safe map lookup.
-		if !SupportedEvents[nexusevents.Topic(e.Type)] {
+		if !SupportedEvents[e.Type] {
 			continue
 		}
 

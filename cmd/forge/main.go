@@ -114,7 +114,7 @@ func run(logger *log.Logger) error {
 
 	// ── 7. TRIGGER REGISTRY + SUBSCRIBER (Phase 3) ───────────────────────────
 	triggerRegistry   := trigger.NewRegistry(wfStore)
-	triggerSubscriber := trigger.NewSubscriber(nexusAddr, triggerRegistry, wfExecutor, logger)
+	triggerSubscriber := trigger.NewSubscriber(nexusAddr, triggerRegistry, wfExecutor, logger, serviceToken)
 
 	// ── 8. HTTP API ───────────────────────────────────────────────────────────
 	apiServer := api.NewServer(api.ServerConfig{
