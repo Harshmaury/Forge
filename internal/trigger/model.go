@@ -1,5 +1,9 @@
 // @forge-project: forge
 // @forge-path: internal/trigger/model.go
+// FG-H-06: SupportedEvents map key type changed from string to
+//   nexusevents.Topic for consistency with FG-H-02 (subscriber lookup).
+//   The map is populated from topic constants — no string literals.
+//
 // Package trigger handles automation trigger registration and event matching.
 // A trigger maps one workspace event topic to one stored workflow (ADR-007).
 package trigger
@@ -16,7 +20,8 @@ import (
 // ── SUPPORTED EVENTS ─────────────────────────────────────────────────────────
 
 // SupportedEvents is the set of workspace event topics Forge can trigger on.
-var SupportedEvents = map[string]bool{
+// FG-H-06: keyed by nexusevents.Topic (not string) for type-safe lookup.
+var SupportedEvents = map[nexusevents.Topic]bool{
 	nexusevents.TopicWorkspaceFileCreated:     true,
 	nexusevents.TopicWorkspaceFileModified:    true,
 	nexusevents.TopicWorkspaceFileDeleted:     true,
@@ -46,7 +51,7 @@ func (r *CreateTriggerRequest) Validate() error {
 	if r.Event == "" {
 		return fmt.Errorf("event is required")
 	}
-	if !SupportedEvents[r.Event] {
+	if !SupportedEvents[nexusevents.Topic(r.Event)] {
 		return fmt.Errorf("unsupported event %q — supported: workspace.file.created, .modified, .deleted, .updated, .project.detected", r.Event)
 	}
 	if r.WorkflowID == "" {

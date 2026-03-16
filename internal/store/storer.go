@@ -1,5 +1,7 @@
 // @forge-project: forge
 // @forge-path: internal/store/storer.go
+// FG-H-03: WithWorkflowTransaction added for atomic workflow creation.
+//
 // Storer is the read/write contract for the Forge workflow database.
 // *Store satisfies this interface. Tests supply a mock.
 //
@@ -59,6 +61,10 @@ type Storer interface {
 	GetWorkflow(id string) (*Workflow, error)
 	GetAllWorkflows() ([]*Workflow, error)
 	DeleteWorkflow(id string) error
+
+	// WithWorkflowTransaction executes fn inside a SQLite transaction.
+	// Used by WorkflowHandler.Create for atomic workflow+steps creation.
+	WithWorkflowTransaction(fn func() error) error
 
 	// ── Steps (Phase 2) ────────────────────────────────────────
 	AddStep(s *WorkflowStep) error

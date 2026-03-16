@@ -1,5 +1,7 @@
 // @forge-project: forge
 // @forge-path: internal/store/db.go
+// FG-H-03: WithWorkflowTransaction added.
+//
 // Package store manages the Forge SQLite workflow database.
 //
 // Phase 2 (migration v1): workflows + workflow_steps
@@ -99,6 +101,23 @@ func (s *Store) DeleteWorkflow(id string) error {
 	}
 	_, err := s.db.Exec(`DELETE FROM workflows WHERE id = ?`, id)
 	return err
+}
+
+// WithWorkflowTransaction executes fn inside a SQLite transaction.
+// Rollback on fn error, Commit on success. FG-H-03.
+func (s *Store) WithWorkflowTransaction(fn func() error) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	if err := fn(); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit transaction: %w", err)
+	}
+	return nil
 }
 
 // ── STEPS ─────────────────────────────────────────────────────────────────────

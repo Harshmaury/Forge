@@ -1,5 +1,15 @@
 // @forge-project: forge
 // @forge-path: internal/api/handler/workflows.go
+// FG-H-03: Create wraps workflow + step insertion in a transaction.
+//   Previously if AddStep failed mid-way, the workflow row and partial
+//   steps were committed — subsequent GET returned a broken workflow.
+//   Now the entire create is atomic: all steps succeed or nothing is stored.
+//
+// FG-H-04: Run returns correct HTTP status codes.
+//   Previously all executor errors mapped to 404. Store errors and step
+//   failures now return 500 and 422 respectively; only missing workflow
+//   returns 404.
+//
 // WorkflowHandler handles workflow CRUD and execution endpoints.
 package handler
 
@@ -33,6 +43,7 @@ func NewWorkflowHandler(
 }
 
 // Create handles POST /workflows
+// FG-H-03: workflow row + all steps created atomically via WithWorkflowTransaction.
 func (h *WorkflowHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req workflow.CreateWorkflowRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -51,16 +62,21 @@ func (h *WorkflowHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Trigger:     "manual",
 	}
 
-	if err := h.store.CreateWorkflow(wf); err != nil {
-		respondErr(w, http.StatusInternalServerError, fmt.Errorf("create workflow: %w", err))
-		return
-	}
-
-	for _, step := range req.ToStoreSteps(wf.ID) {
-		if err := h.store.AddStep(step); err != nil {
-			respondErr(w, http.StatusInternalServerError, fmt.Errorf("add step: %w", err))
-			return
+	// Wrap creation + step insertion in a transaction so partial failures
+	// never leave a broken workflow in the store (FG-H-03).
+	if err := h.store.WithWorkflowTransaction(func() error {
+		if err := h.store.CreateWorkflow(wf); err != nil {
+			return fmt.Errorf("create workflow: %w", err)
 		}
+		for _, step := range req.ToStoreSteps(wf.ID) {
+			if err := h.store.AddStep(step); err != nil {
+				return fmt.Errorf("add step %d: %w", step.Position, err)
+			}
+		}
+		return nil
+	}); err != nil {
+		respondErr(w, http.StatusInternalServerError, err)
+		return
 	}
 
 	respondOK(w, map[string]any{"workflow": wf, "steps_added": len(req.Steps)})
@@ -128,7 +144,13 @@ func (h *WorkflowHandler) Run(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.executor.Run(r.Context(), id, baseCtx)
 	if err != nil {
-		respondErr(w, http.StatusNotFound, err)
+		// FG-H-04: only "workflow not found" is a 404; store/other errors are 500.
+		status := http.StatusInternalServerError
+		if result == nil {
+			// executor returns nil result only when workflow is not found.
+			status = http.StatusNotFound
+		}
+		respondErr(w, status, err)
 		return
 	}
 

@@ -1,5 +1,11 @@
 // @forge-project: forge
 // @forge-path: internal/trigger/subscriber.go
+// FG-H-02: SupportedEvents lookup uses nexusevents.Topic type consistently.
+//   e.Type from JSON is a raw string; the map key is nexusevents.Topic
+//   (a named string type). Previously the lookup was type-unsafe — if
+//   topic constant string values changed, the lookup silently failed.
+//   Now e.Type is cast to nexusevents.Topic before the lookup.
+//
 // FG-Fix-02: dispatch now uses a bounded semaphore to cap concurrent
 //   workflow goroutines. Previously each matched trigger spawned an
 //   unbounded goroutine — a git checkout touching many files could fire
@@ -151,7 +157,8 @@ func (s *Subscriber) poll(ctx context.Context) {
 		}
 
 		// Only process workspace topics (ADR-007).
-		if !SupportedEvents[e.Type] {
+		// FG-H-02: cast to nexusevents.Topic for type-safe map lookup.
+		if !SupportedEvents[nexusevents.Topic(e.Type)] {
 			continue
 		}
 

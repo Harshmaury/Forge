@@ -1,5 +1,10 @@
 // @forge-project: forge
 // @forge-path: cmd/forge/main.go
+// FG-H-05: workspaceRoot now read from FORGE_WORKSPACE env var.
+//   Previously hardcoded to ~/workspace — inconsistent with Atlas
+//   (ATLAS_WORKSPACE) and Nexus (NEXUS_WORKSPACE). Each service
+//   independently configures its workspace root via env vars.
+//
 // forge is the Forge execution service daemon.
 //
 // Startup sequence:
@@ -53,7 +58,7 @@ func run(logger *log.Logger) error {
 	nexusAddr     := config.EnvOrDefault("NEXUS_HTTP_ADDR", config.DefaultNexusAddr)
 	atlasAddr     := config.EnvOrDefault("ATLAS_HTTP_ADDR", config.DefaultAtlasAddr)
 	dbPath        := config.ExpandHome(config.EnvOrDefault("FORGE_DB_PATH", "~/.nexus/forge.db"))
-	workspaceRoot := config.ExpandHome("~/workspace")
+	workspaceRoot := config.ExpandHome(config.EnvOrDefault("FORGE_WORKSPACE", "~/workspace"))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	sigCh := make(chan os.Signal, 1)
