@@ -13,6 +13,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+
+	canon "github.com/Harshmaury/Canon/identity"
 	"time"
 )
 
@@ -73,7 +75,7 @@ func (c *Client) get(ctx context.Context, path string) (*http.Response, error) {
 		return nil, err
 	}
 	if c.serviceToken != "" && path != "/health" {
-		req.Header.Set("X-Service-Token", c.serviceToken) // ADR-008
+		req.Header.Set(canon.ServiceTokenHeader, c.serviceToken) // ADR-008
 	}
 	return c.httpClient.Do(req)
 }

@@ -3,7 +3,6 @@ module github.com/Harshmaury/Forge
 go 1.25.0
 
 require (
-
 	// Nexus eventbus — import topic constants only (Phase 3 automation triggers)
 	github.com/Harshmaury/Nexus v0.0.0
 	// UUID — unique command IDs (ADR-004 requires id field on every command)
@@ -19,6 +18,8 @@ require (
 	// YAML — workflow definition files (Phase 2)
 	gopkg.in/yaml.v3 v3.0.1
 )
+
+require github.com/Harshmaury/Canon v0.3.0 // indirect
 
 // Replace directive points to local Nexus for topic constant imports
 // Update to a tagged release once Nexus publishes one

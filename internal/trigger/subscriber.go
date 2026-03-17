@@ -25,6 +25,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+
+	canon "github.com/Harshmaury/Canon/identity"
 	"strconv"
 	"time"
 
@@ -122,7 +124,7 @@ func (s *Subscriber) poll(ctx context.Context) {
 		return
 	}
 	if s.serviceToken != "" {
-		req.Header.Set("X-Service-Token", s.serviceToken) // ADR-008
+		req.Header.Set(canon.ServiceTokenHeader, s.serviceToken) // ADR-008
 	}
 
 	resp, err := s.httpClient.Do(req)
