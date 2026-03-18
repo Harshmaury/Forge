@@ -134,6 +134,7 @@ func (s *Subscriber) poll(ctx context.Context) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		s.logger.Printf("WARNING: Nexus poll returned HTTP %d — will retry next tick", resp.StatusCode)
 		return
 	}
 
