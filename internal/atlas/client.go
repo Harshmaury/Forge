@@ -2,6 +2,9 @@
 // @forge-path: internal/atlas/client.go
 // ADR-008: serviceToken field + get() helper inject X-Service-Token on all
 // outbound requests except /health.
+// ISSUE-002 fix: get() now propagates X-Trace-ID from context using
+// middleware.TraceIDFromContext — trace flows from inbound command through
+// outbound Atlas calls.
 // Package atlas provides an HTTP client for querying the Atlas knowledge API.
 // Forge reads workspace context from Atlas to enrich command objects.
 // Atlas is read-only — Forge never modifies Atlas indexes.
@@ -13,9 +16,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	canon "github.com/Harshmaury/Canon/identity"
-	"time"
+	"github.com/Harshmaury/Forge/internal/api/middleware"
 )
 
 const defaultTimeout = 10 * time.Second
@@ -69,6 +73,8 @@ func (c *Client) WithServiceToken(token string) *Client {
 }
 
 // get is an authenticated GET helper — adds X-Service-Token on non-health paths.
+// ISSUE-002: propagates X-Trace-ID from context so the trace flows through
+// Forge → Atlas outbound calls.
 func (c *Client) get(ctx context.Context, path string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
@@ -76,6 +82,9 @@ func (c *Client) get(ctx context.Context, path string) (*http.Response, error) {
 	}
 	if c.serviceToken != "" && path != "/health" {
 		req.Header.Set(canon.ServiceTokenHeader, c.serviceToken) // ADR-008
+	}
+	if traceID := middleware.TraceIDFromContext(ctx); traceID != "" {
+		req.Header.Set(canon.TraceIDHeader, traceID)
 	}
 	return c.httpClient.Do(req)
 }
