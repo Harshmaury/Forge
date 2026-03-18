@@ -46,6 +46,7 @@ func NewCommandHandler(
 
 // Submit handles POST /commands.
 // Phase 4: preflight check before execution, result logged to history.
+// ADR-021: snapshot captured at check time — frozen before Execute() runs.
 func (h *CommandHandler) Submit(w http.ResponseWriter, r *http.Request) {
 	var raw command.RawCommandRequest
 	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
@@ -53,48 +54,74 @@ func (h *CommandHandler) Submit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Translation layer — always before executor (ADR-004).
 	cmd, err := h.translator.Translate(raw)
 	if err != nil {
 		respondErr(w, http.StatusBadRequest, err)
 		return
 	}
 
-	// Context enrichment from Atlas + Nexus.
-	cmd = h.resolver.ResolveContext(r.Context(), cmd)
-
-	traceID := middleware.TraceIDFromContext(r.Context())
+	cmd       = h.resolver.ResolveContext(r.Context(), cmd)
+	traceID   := middleware.TraceIDFromContext(r.Context())
 	startedAt := time.Now().UTC()
 
-	// Phase 4: preflight — verify target is verified in Atlas graph (ADR-010).
 	if h.checker != nil {
-		pr := h.checker.Check(r.Context(), cmd.Target)
-		if !pr.Permitted {
-			h.recordDenied(cmd, traceID, startedAt, pr.Reason)
-			respondErr(w, http.StatusUnprocessableEntity,
-				fmt.Errorf("preflight denied: %s", pr.Reason))
-			return
-		}
-	}
-
-	// Execute.
-	result := h.engine.Execute(r.Context(), cmd)
-	finishedAt := time.Now().UTC()
-
-	// Log to history (Phase 4).
-	h.recordExecution(cmd, traceID, result, startedAt, finishedAt)
-
-	if !result.Success {
-		respondErr(w, http.StatusUnprocessableEntity,
-			fmt.Errorf("%s", result.Error))
+		h.submitWithPreflight(w, r, cmd, traceID, startedAt)
 		return
 	}
 
+	result     := h.engine.Execute(r.Context(), cmd)
+	finishedAt := time.Now().UTC()
+	h.recordExecution(cmd, traceID, result, startedAt, finishedAt, store.PreflightSnapshot{})
+	if !result.Success {
+		respondErr(w, http.StatusUnprocessableEntity, fmt.Errorf("%s", result.Error))
+		return
+	}
+	respondOK(w, result.ToExecutionResult())
+}
+
+// submitWithPreflight runs the preflight check, captures the snapshot,
+// then executes — keeping the snapshot frozen across the Execute() call.
+func (h *CommandHandler) submitWithPreflight(
+	w http.ResponseWriter,
+	r *http.Request,
+	cmd *command.Command,
+	traceID string,
+	startedAt time.Time,
+) {
+	pr := h.checker.Check(r.Context(), cmd.Target)
+	snap := store.PreflightSnapshot{
+		AtlasQueried:  pr.Snapshot.AtlasQueried,
+		ProjectFound:  pr.Snapshot.ProjectFound,
+		ProjectID:     pr.Snapshot.ProjectID,
+		ProjectStatus: pr.Snapshot.ProjectStatus,
+		Capabilities:  pr.Snapshot.Capabilities,
+		DependsOn:     pr.Snapshot.DependsOn,
+		SnapshotAt:    pr.Snapshot.SnapshotAt.Format(time.RFC3339Nano),
+	}
+	if !pr.Permitted {
+		h.recordDenied(cmd, traceID, startedAt, pr.Reason, snap)
+		respondErr(w, http.StatusUnprocessableEntity,
+			fmt.Errorf("preflight denied: %s", pr.Reason))
+		return
+	}
+	result     := h.engine.Execute(r.Context(), cmd)
+	finishedAt := time.Now().UTC()
+	h.recordExecution(cmd, traceID, result, startedAt, finishedAt, snap)
+	if !result.Success {
+		respondErr(w, http.StatusUnprocessableEntity, fmt.Errorf("%s", result.Error))
+		return
+	}
 	respondOK(w, result.ToExecutionResult())
 }
 
 // recordExecution persists a completed execution — best effort, never panics.
-func (h *CommandHandler) recordExecution(cmd *command.Command, traceID string, result *intent.Result, startedAt, finishedAt time.Time) {
+func (h *CommandHandler) recordExecution(
+	cmd *command.Command,
+	traceID string,
+	result *intent.Result,
+	startedAt, finishedAt time.Time,
+	snap store.PreflightSnapshot,
+) {
 	if h.store == nil {
 		return
 	}
@@ -103,37 +130,45 @@ func (h *CommandHandler) recordExecution(cmd *command.Command, traceID string, r
 		status = "failure"
 	}
 	_ = h.store.LogExecution(&store.ExecutionRecord{
-		ID:         uuid.New().String(),
-		CommandID:  cmd.ID,
-		Intent:     cmd.Intent,
-		Target:     cmd.Target,
-		TraceID:    traceID,
-		Status:     status,
-		Output:     result.Output,
-		Error:      result.Error,
-		DurationMS: finishedAt.Sub(startedAt).Milliseconds(),
-		StartedAt:  startedAt,
-		FinishedAt: finishedAt,
+		ID:                uuid.New().String(),
+		CommandID:         cmd.ID,
+		Intent:            cmd.Intent,
+		Target:            cmd.Target,
+		TraceID:           traceID,
+		Status:            status,
+		Output:            result.Output,
+		Error:             result.Error,
+		DurationMS:        finishedAt.Sub(startedAt).Milliseconds(),
+		StartedAt:         startedAt,
+		FinishedAt:        finishedAt,
+		PreflightSnapshot: snap,
 	})
 }
 
 // recordDenied persists a preflight-denied execution record.
-func (h *CommandHandler) recordDenied(cmd *command.Command, traceID string, startedAt time.Time, reason string) {
+func (h *CommandHandler) recordDenied(
+	cmd *command.Command,
+	traceID string,
+	startedAt time.Time,
+	reason string,
+	snap store.PreflightSnapshot,
+) {
 	if h.store == nil {
 		return
 	}
 	now := time.Now().UTC()
 	_ = h.store.LogExecution(&store.ExecutionRecord{
-		ID:         uuid.New().String(),
-		CommandID:  cmd.ID,
-		Intent:     cmd.Intent,
-		Target:     cmd.Target,
-		TraceID:    traceID,
-		Status:     "denied",
-		Error:      reason,
-		DurationMS: now.Sub(startedAt).Milliseconds(),
-		StartedAt:  startedAt,
-		FinishedAt: now,
+		ID:                uuid.New().String(),
+		CommandID:         cmd.ID,
+		Intent:            cmd.Intent,
+		Target:            cmd.Target,
+		TraceID:           traceID,
+		Status:            "denied",
+		Error:             reason,
+		DurationMS:        now.Sub(startedAt).Milliseconds(),
+		StartedAt:         startedAt,
+		FinishedAt:        now,
+		PreflightSnapshot: snap,
 	})
 }
 

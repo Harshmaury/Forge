@@ -51,19 +51,34 @@ type Trigger struct {
 
 // ── PHASE 4 TYPES ─────────────────────────────────────────────────────────────
 
+// PreflightSnapshot is the Atlas context captured at authorization time (ADR-021).
+// Serialised as JSON into execution_history.preflight_snapshot_json (migration v4).
+// Zero value is safe — represents a record written before ADR-021 was applied.
+type PreflightSnapshot struct {
+	AtlasQueried  bool     `json:"atlas_queried"`
+	ProjectFound  bool     `json:"project_found"`
+	ProjectID     string   `json:"project_id"`
+	ProjectStatus string   `json:"project_status"`
+	Capabilities  []string `json:"capabilities"`
+	DependsOn     []string `json:"depends_on"`
+	SnapshotAt    string   `json:"snapshot_at"` // RFC3339Nano UTC
+}
+
 // ExecutionRecord is a persisted record of a command execution (ADR-010).
+// ADR-021: PreflightSnapshot field added — captures Atlas state at auth time.
 type ExecutionRecord struct {
-	ID         string    // UUID
-	CommandID  string    // Command.ID
-	Intent     string
-	Target     string
-	TraceID    string
-	Status     string    // "success" | "failure" | "denied"
-	Output     string
-	Error      string
-	DurationMS int64
-	StartedAt  time.Time
-	FinishedAt time.Time
+	ID                string            // UUID
+	CommandID         string            // Command.ID
+	Intent            string
+	Target            string
+	TraceID           string
+	Status            string            // "success" | "failure" | "denied"
+	Output            string
+	Error             string
+	DurationMS        int64
+	StartedAt         time.Time
+	FinishedAt        time.Time
+	PreflightSnapshot PreflightSnapshot // ADR-021 — zero value for pre-ADR-021 rows
 }
 
 // ── STORER INTERFACE ──────────────────────────────────────────────────────────

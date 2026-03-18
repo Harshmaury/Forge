@@ -231,13 +231,21 @@ func (s *Store) DeleteTrigger(id string) error {
 // ── EXECUTION HISTORY (PHASE 4) ───────────────────────────────────────────────
 
 // LogExecution persists an execution record to the history table.
+// ADR-021: PreflightSnapshot is marshalled to JSON for the new column.
+// If marshalling fails, empty string is used — logging is never blocked.
 func (s *Store) LogExecution(r *ExecutionRecord) error {
-	_, err := s.db.Exec(`
+	snapJSON, err := json.Marshal(r.PreflightSnapshot)
+	if err != nil {
+		snapJSON = []byte("")
+	}
+	_, err = s.db.Exec(`
 		INSERT INTO execution_history
-			(id, command_id, intent, target, trace_id, status, output, error, duration_ms, started_at, finished_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			(id, command_id, intent, target, trace_id, status, output, error,
+			 duration_ms, started_at, finished_at, preflight_snapshot_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, r.ID, r.CommandID, r.Intent, r.Target, r.TraceID,
-		r.Status, r.Output, r.Error, r.DurationMS, r.StartedAt, r.FinishedAt)
+		r.Status, r.Output, r.Error, r.DurationMS,
+		r.StartedAt, r.FinishedAt, string(snapJSON))
 	if err != nil {
 		return fmt.Errorf("log execution %s: %w", r.ID, err)
 	}
@@ -250,7 +258,8 @@ func (s *Store) GetHistory(limit int) ([]*ExecutionRecord, error) {
 		limit = 20
 	}
 	rows, err := s.db.Query(`
-		SELECT id, command_id, intent, target, trace_id, status, output, error, duration_ms, started_at, finished_at
+		SELECT id, command_id, intent, target, trace_id, status, output, error,
+		       duration_ms, started_at, finished_at, preflight_snapshot_json
 		FROM execution_history ORDER BY started_at DESC LIMIT ?
 	`, limit)
 	if err != nil {
@@ -263,7 +272,8 @@ func (s *Store) GetHistory(limit int) ([]*ExecutionRecord, error) {
 // GetHistoryByTrace returns all execution records for a given trace ID.
 func (s *Store) GetHistoryByTrace(traceID string) ([]*ExecutionRecord, error) {
 	rows, err := s.db.Query(`
-		SELECT id, command_id, intent, target, trace_id, status, output, error, duration_ms, started_at, finished_at
+		SELECT id, command_id, intent, target, trace_id, status, output, error,
+		       duration_ms, started_at, finished_at, preflight_snapshot_json
 		FROM execution_history WHERE trace_id = ? ORDER BY started_at ASC
 	`, traceID)
 	if err != nil {
@@ -277,9 +287,16 @@ func scanHistory(rows *sql.Rows) ([]*ExecutionRecord, error) {
 	var records []*ExecutionRecord
 	for rows.Next() {
 		r := &ExecutionRecord{}
-		if err := rows.Scan(&r.ID, &r.CommandID, &r.Intent, &r.Target, &r.TraceID,
-			&r.Status, &r.Output, &r.Error, &r.DurationMS, &r.StartedAt, &r.FinishedAt); err != nil {
+		var snapJSON string
+		if err := rows.Scan(
+			&r.ID, &r.CommandID, &r.Intent, &r.Target, &r.TraceID,
+			&r.Status, &r.Output, &r.Error, &r.DurationMS,
+			&r.StartedAt, &r.FinishedAt, &snapJSON,
+		); err != nil {
 			return nil, fmt.Errorf("scan history: %w", err)
+		}
+		if snapJSON != "" {
+			_ = json.Unmarshal([]byte(snapJSON), &r.PreflightSnapshot)
 		}
 		records = append(records, r)
 	}
@@ -347,6 +364,11 @@ var allMigrations = []schemaVersion{
 	{3, `CREATE INDEX IF NOT EXISTS idx_history_trace   ON execution_history(trace_id)`},
 	{3, `CREATE INDEX IF NOT EXISTS idx_history_target  ON execution_history(target)`},
 	{3, `CREATE INDEX IF NOT EXISTS idx_history_started ON execution_history(started_at)`},
+
+	// v4 — preflight snapshot column (ADR-021)
+	// ALTER TABLE ADD COLUMN is safe on a live SQLite DB — no table rebuild.
+	// Default '' means all pre-ADR-021 rows unmarshal to zero PreflightSnapshot.
+	{4, `ALTER TABLE execution_history ADD COLUMN preflight_snapshot_json TEXT NOT NULL DEFAULT ''`},
 }
 
 func (s *Store) migrate() error {
