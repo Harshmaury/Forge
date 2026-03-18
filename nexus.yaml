@@ -2,16 +2,18 @@ name: forge
 id: forge
 type: web-api
 language: go
-version: 0.4.0
+version: 0.5.0
 keywords:
   - forge
   - execution
-  - workflow
-  - intent
+  - workflows
+  - commands
 capabilities:
   - intent-translation
   - workflow-execution
   - automation-triggers
+  - execution-history
+  - preflight-validation
 depends_on:
   - nexus
   - atlas
