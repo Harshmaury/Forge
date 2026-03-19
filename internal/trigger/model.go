@@ -33,9 +33,10 @@ var SupportedEvents = map[nexusevents.Topic]bool{
 
 // CreateTriggerRequest is the HTTP body for POST /triggers.
 type CreateTriggerRequest struct {
-	Event      string `json:"event"`       // workspace topic
+	Event      string `json:"event"`       // workspace topic (empty for cron triggers)
 	WorkflowID string `json:"workflow_id"` // must exist in store
 	Filter     Filter `json:"filter"`      // optional
+	Schedule   string `json:"schedule"`    // @every <dur> | @hourly | @daily (empty = event trigger)
 }
 
 // Filter scopes a trigger to specific files or projects.
@@ -47,15 +48,25 @@ type Filter struct {
 }
 
 // Validate checks that a CreateTriggerRequest has all required fields.
+// A trigger must have either an event (event trigger) or a schedule (cron trigger), not neither.
 func (r *CreateTriggerRequest) Validate() error {
+	if r.WorkflowID == "" {
+		return fmt.Errorf("workflow_id is required")
+	}
+	if r.Schedule != "" {
+		// Cron trigger — event field is ignored.
+		_, err := parseSchedule(r.Schedule)
+		if err != nil {
+			return fmt.Errorf("invalid schedule: %w", err)
+		}
+		return nil
+	}
+	// Event trigger — event field required.
 	if r.Event == "" {
-		return fmt.Errorf("event is required")
+		return fmt.Errorf("either event or schedule is required")
 	}
 	if !SupportedEvents[nexusevents.Topic(r.Event)] {
 		return fmt.Errorf("unsupported event %q — supported: workspace.file.created, .modified, .deleted, .updated, .project.detected", r.Event)
-	}
-	if r.WorkflowID == "" {
-		return fmt.Errorf("workflow_id is required")
 	}
 	return nil
 }
@@ -69,6 +80,7 @@ func (r *CreateTriggerRequest) ToStoreTrigger(id string) *store.Trigger {
 		FilterExt:  r.Filter.Extension,
 		FilterProj: r.Filter.Project,
 		FilterDir:  r.Filter.Directory,
+		Schedule:   r.Schedule,
 		Enabled:    true,
 	}
 }

@@ -95,6 +95,9 @@ func NewSubscriber(
 	}
 }
 
+// Sem returns the workflow execution semaphore for sharing with CronScheduler.
+func (s *Subscriber) Sem() chan struct{} { return s.sem }
+
 // Run starts the polling loop and blocks until ctx is cancelled.
 func (s *Subscriber) Run(ctx context.Context) error {
 	ticker := time.NewTicker(pollInterval)

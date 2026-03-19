@@ -46,6 +46,7 @@ type Trigger struct {
 	FilterProj string    // optional: Atlas project ID filter
 	FilterDir  string    // optional: directory path prefix filter
 	Enabled    bool      // disabled triggers are never fired
+	Schedule   string    // @every <dur> | @hourly | @daily (empty = event trigger)
 	CreatedAt  time.Time
 }
 
@@ -108,6 +109,7 @@ type Storer interface {
 	GetTrigger(id string) (*Trigger, error)
 	GetAllTriggers() ([]*Trigger, error)
 	GetEnabledTriggersByEvent(event string) ([]*Trigger, error)
+	GetEnabledCronTriggers() ([]*Trigger, error)
 	DeleteTrigger(id string) error
 
 	// ── Execution history (Phase 4 / ADR-010) ──────────────────

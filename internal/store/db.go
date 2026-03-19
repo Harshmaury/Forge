@@ -173,9 +173,9 @@ func (s *Store) DeleteSteps(workflowID string) error {
 func (s *Store) CreateTrigger(t *Trigger) error {
 	now := time.Now().UTC()
 	_, err := s.db.Exec(`
-		INSERT INTO triggers (id, event, workflow_id, filter_ext, filter_proj, filter_dir, enabled, created_at)
+		INSERT INTO triggers (id, event, workflow_id, filter_ext, filter_proj, filter_dir, schedule, enabled, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, t.ID, t.Event, t.WorkflowID, t.FilterExt, t.FilterProj, t.FilterDir, t.Enabled, now)
+	`, t.ID, t.Event, t.WorkflowID, t.FilterExt, t.FilterProj, t.FilterDir, t.Schedule, t.Enabled, now)
 	if err != nil {
 		return fmt.Errorf("create trigger %s: %w", t.ID, err)
 	}
@@ -218,6 +218,19 @@ func (s *Store) GetEnabledTriggersByEvent(event string) ([]*Trigger, error) {
 	`, event)
 	if err != nil {
 		return nil, fmt.Errorf("get triggers for event %s: %w", event, err)
+	}
+	defer rows.Close()
+	return scanTriggers(rows)
+}
+
+// GetEnabledCronTriggers returns all enabled triggers with a non-empty schedule.
+func (s *Store) GetEnabledCronTriggers() ([]*Trigger, error) {
+	rows, err := s.db.Query(`
+		SELECT id, event, workflow_id, filter_ext, filter_proj, filter_dir, schedule, enabled, created_at
+		FROM triggers
+		WHERE enabled = 1 AND schedule != ''`)
+	if err != nil {
+		return nil, fmt.Errorf("query cron triggers: %w", err)
 	}
 	defer rows.Close()
 	return scanTriggers(rows)
@@ -369,6 +382,7 @@ var allMigrations = []schemaVersion{
 	// ALTER TABLE ADD COLUMN is safe on a live SQLite DB — no table rebuild.
 	// Default '' means all pre-ADR-021 rows unmarshal to zero PreflightSnapshot.
 	{4, `ALTER TABLE execution_history ADD COLUMN preflight_snapshot_json TEXT NOT NULL DEFAULT ''`},
+	{5, `ALTER TABLE triggers ADD COLUMN schedule TEXT NOT NULL DEFAULT ''`},
 }
 
 func (s *Store) migrate() error {
