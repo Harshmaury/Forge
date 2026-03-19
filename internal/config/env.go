@@ -11,7 +11,7 @@ import (
 
 // Default values for all Forge environment variables.
 const (
-	DefaultHTTPAddr  = ":8082"
+	DefaultHTTPAddr  = "127.0.0.1:8082"
 	DefaultNexusAddr = "http://127.0.0.1:8080"
 	DefaultAtlasAddr = "http://127.0.0.1:8081"
 )

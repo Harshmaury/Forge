@@ -2,7 +2,7 @@ name: forge
 id: forge
 type: web-api
 language: go
-version: 0.6.0
+version: 0.6.0-phase5
 keywords:
   - forge
   - execution
