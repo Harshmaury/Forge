@@ -1,67 +1,84 @@
 # WORKFLOW-SESSION.md
-# Session: FG-phase5-scheduled-triggers
-# Date: 2026-03-19
+# Session: FG-fix-scheduler-dedup
+# Date: 2026-03-20
 
-## What changed — Forge Phase 5 (ADR-027)
+## What changed — Forge CronScheduler robustness fix
 
-Scheduled (cron) triggers. POST /triggers now accepts a schedule field.
-A CronScheduler runs alongside the event Subscriber, sharing the same
-semaphore (max 8 concurrent workflows). Schedule expressions:
-  @every 30m | @every 1h | @every 6h | @hourly | @daily
+Three bugs fixed in one pass:
 
-## New files
-- internal/trigger/scheduler.go    — CronScheduler, parseSchedule(), ticker loop
+**Bug 1 — Duplicate tickers (silent, accumulating)**
+reconcile() was called every 60s and started one goroutine per trigger per
+call with no dedup check. After 10 minutes: 10 goroutines per trigger, all
+firing simultaneously, all competing for the semaphore, all writing duplicate
+execution history entries. The comment "harmless" in the original was wrong.
 
-## Modified files
-- internal/store/storer.go         — Schedule field on Trigger struct
-                                     GetEnabledCronTriggers() in interface
-- internal/store/db.go             — migration v5: schedule column
-                                     GetEnabledCronTriggers() implementation
-                                     SELECT/INSERT/scan updated for schedule
-- internal/trigger/model.go        — Schedule in CreateTriggerRequest
-                                     Validate: event OR schedule required
-                                     ToStoreTrigger: carries Schedule
-- internal/trigger/subscriber.go   — Sem() method exported
-- nexus.yaml                       — version: 0.6.0
+**Bug 2 — CronScheduler never wired in main.go**
+MAIN_GO_PATCH.md from phase5 was never applied. CronScheduler existed but
+was never started — scheduled triggers registered successfully via
+POST /triggers but never fired.
+
+**Bug 3 — errCh buffer too small**
+main.go had errCh buffer of 2 (api + subscriber). Adding the scheduler
+goroutine required bumping to 3 to avoid a blocked send on shutdown.
+
+## Fix design
+
+CronScheduler gains an `active map[string]*tickerEntry` protected by a mutex.
+Each entry holds the trigger's cancel function and schedule string.
+
+reconcile() (renamed from startTriggerTickers):
+- Stops goroutines for triggers no longer in the store or with changed schedules
+- Starts goroutines only for triggers not already in active map
+- Guarantees exactly one goroutine per active trigger at all times
+
+On ctx cancellation: stopAll() cancels all active entries and empties the map.
+
+Schedule changes are handled automatically: if a trigger's schedule string
+differs from what's in the active map, the old goroutine is cancelled and a
+new one started with the new interval — no restart required.
+
+## Files changed
+
+- `internal/trigger/scheduler.go`  — dedup map, reconcile(), stopAll(), per-ticker cancel
+- `internal/trigger/scheduler_test.go` — 6 table-driven tests (new file)
+- `cmd/forge/main.go`               — wire CronScheduler, errCh buffer 2 → 3, version bump
 
 ## Apply
 
-cd ~/workspace/projects/apps/forge && \
-unzip -o /mnt/c/Users/harsh/Downloads/engx-drop/forge-phase5-scheduled-triggers-20260319.zip -d .
-
-Then apply MAIN_GO_PATCH.md to cmd/forge/main.go (2 changes, script inside the file).
-
-go build ./...
+```bash
+cd ~/workspace/projects/engx/services/forge && \
+unzip -o /mnt/c/Users/harsh/Downloads/engx-drop/forge-fix-scheduler-dedup-20260320-1530.zip -d . && \
+go build ./... && \
+go test ./internal/trigger/...
+```
 
 ## Verify
 
-go build ./... && go test ./internal/trigger/...
+```bash
+go build ./...
+go test ./internal/trigger/...
+# Expected: all scheduler tests pass
 
-# Register a scheduled trigger:
+# Register a cron trigger then check logs:
+FORGE_SERVICE_TOKEN=<token> forge &
 curl -s -X POST http://127.0.0.1:8082/triggers \
   -H "Content-Type: application/json" \
-  -d '{"workflow_id":"<id>","schedule":"@every 5m"}' | jq .
+  -H "X-Service-Token: <token>" \
+  -d '{"workflow_id":"<id>","schedule":"@every 1m"}' | jq .
 
-# Check it's listed:
-curl -s http://127.0.0.1:8082/triggers | jq '.data.triggers[] | {id, schedule}'
-
-# After 5 minutes, check forge history:
-curl -s http://127.0.0.1:8082/history | jq '.data[0] | {intent, target, status}'
-
-# Via engx:
-engx trigger add "" <workflow-id> --schedule "@every 5m"
+# After 60s, check forge logs — should see exactly ONE fire per minute:
+# [forge] cron trigger <id>: firing workflow test-workflow (@every 1m)
+# NOT: multiple identical lines per minute
+```
 
 ## Commit
 
+```bash
 git add \
   internal/trigger/scheduler.go \
-  internal/trigger/model.go \
-  internal/trigger/subscriber.go \
-  internal/store/storer.go \
-  internal/store/db.go \
+  internal/trigger/scheduler_test.go \
   cmd/forge/main.go \
-  nexus.yaml \
   WORKFLOW-SESSION.md && \
-git commit -m "feat(phase5): scheduled cron triggers — @every, @hourly, @daily (ADR-027)" && \
-git tag v0.6.0-phase5 && \
-git push origin main --tags
+git commit -m "fix(scheduler): dedup active tickers + wire CronScheduler in main" && \
+git push origin main
+```

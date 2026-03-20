@@ -141,6 +141,7 @@ func TestDispatch_FiresMatchingWorkflow(t *testing.T) {
 		executor:   wfExecutor,
 		logger:     log.New(os.Stderr, "[test] ", 0),
 		httpClient: nil, // not used in dispatch test
+		sem:        make(chan struct{}, 8),
 	}
 
 	p := WorkspaceEventPayload{Path: "/workspace/nexus/main.go", Extension: ".go"}

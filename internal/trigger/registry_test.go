@@ -42,7 +42,13 @@ func (m *mockStore) DeleteSteps(id string) error                       { return 
 func (m *mockStore) CreateTrigger(t *store.Trigger) error              { return nil }
 func (m *mockStore) GetTrigger(id string) (*store.Trigger, error)      { return nil, nil }
 func (m *mockStore) GetAllTriggers() ([]*store.Trigger, error)         { return m.triggers, nil }
+func (m *mockStore) LogExecution(r *store.ExecutionRecord) error                    { return nil }
+func (m *mockStore) GetHistory(limit int) ([]*store.ExecutionRecord, error)         { return nil, nil }
+func (m *mockStore) GetHistoryByTrace(id string) ([]*store.ExecutionRecord, error)  { return nil, nil }
+func (m *mockStore) WithWorkflowTransaction(fn func() error) error                  { return fn() }
 func (m *mockStore) DeleteTrigger(id string) error                     { return nil }
+func (m *mockStore) GetEnabledCronTriggers() ([]*store.Trigger, error)  { return nil, nil }
+
 
 // ── FILTER MATCHING ───────────────────────────────────────────────────────────
 

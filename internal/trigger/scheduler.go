@@ -2,22 +2,21 @@
 // @forge-path: internal/trigger/scheduler.go
 // CronScheduler fires workflows on a time-based schedule (Phase 5 / ADR-027).
 //
-// Supported schedule expressions (keep it simple — no full cron syntax):
-//   @every 30m    — fire every 30 minutes
-//   @every 1h     — fire every 1 hour
-//   @every 6h     — fire every 6 hours
-//   @hourly       — alias for @every 1h
-//   @daily        — alias for @every 24h
+// Supported schedule expressions:
+//   @every <dur>   — e.g. @every 30m, @every 2h  (minimum 1m)
+//   @hourly        — alias for @every 1h
+//   @daily         — alias for @every 24h
 //
-// Design decisions:
+// Design:
 //   - No external cron library. time.ParseDuration covers all practical needs.
-//   - Each scheduled trigger gets its own ticker goroutine, bounded by the
-//     same semaphore as the event Subscriber (maxConcurrentWorkflows = 8).
-//   - Store is polled at startup and re-polled every 60s — new triggers
-//     added via POST /triggers are picked up without a restart.
-//   - Triggers with an empty Schedule field are ignored by the scheduler.
-//   - A scheduler tick fires the workflow with target="" and
-//     requesting_agent="scheduler" in the command context.
+//   - Each active trigger runs in exactly one goroutine. The active map tracks
+//     running trigger IDs and their cancel functions. Refresh calls only start
+//     goroutines for triggers not already running, and cancels goroutines for
+//     triggers that were deleted or disabled since the last refresh.
+//   - Shares the same semaphore as the event Subscriber — no parallel over-execution.
+//   - Store is polled at startup and re-polled every 60s. New triggers are
+//     picked up and removed triggers are stopped without a process restart.
+//   - A scheduler tick fires the workflow with requesting_agent="scheduler".
 package trigger
 
 import (
@@ -25,26 +24,44 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/Harshmaury/Forge/internal/command"
 	"github.com/Harshmaury/Forge/internal/store"
 	"github.com/Harshmaury/Forge/internal/workflow"
 )
 
 const schedulerRefreshInterval = 60 * time.Second
 
+// tickerEntry tracks one running ticker goroutine.
+type tickerEntry struct {
+	cancel   context.CancelFunc
+	schedule string
+}
+
+// WorkflowRunner is the execution contract the scheduler depends on.
+// *workflow.Executor satisfies this interface. Tests supply a mock.
+type WorkflowRunner interface {
+	Run(ctx context.Context, workflowID string, baseContext command.CommandContext) (*workflow.WorkflowRunResult, error)
+}
+
 // CronScheduler polls the store for scheduled triggers and fires them on time.
+// Each trigger runs in exactly one goroutine — guaranteed by the active map.
 type CronScheduler struct {
 	store    store.Storer
-	executor *workflow.Executor
+	executor WorkflowRunner
 	logger   *log.Logger
 	sem      chan struct{} // shared semaphore — same bound as Subscriber
+
+	mu     sync.Mutex
+	active map[string]*tickerEntry // triggerID → running goroutine entry
 }
 
 // NewCronScheduler creates a CronScheduler sharing the given semaphore.
 func NewCronScheduler(
 	s store.Storer,
-	executor *workflow.Executor,
+	executor WorkflowRunner,
 	logger *log.Logger,
 	sem chan struct{},
 ) *CronScheduler {
@@ -53,60 +70,107 @@ func NewCronScheduler(
 		executor: executor,
 		logger:   logger,
 		sem:      sem,
+		active:   make(map[string]*tickerEntry),
 	}
 }
 
 // Run starts the scheduling loop and blocks until ctx is cancelled.
-// It refreshes the trigger list every 60s so newly registered cron
-// triggers are picked up without a process restart.
+// On ctx cancellation, all active ticker goroutines are stopped cleanly.
 func (cs *CronScheduler) Run(ctx context.Context) error {
-	if err := cs.startTriggerTickers(ctx); err != nil {
-		cs.logger.Printf("WARNING: cron scheduler initial load failed: %v", err)
-	}
+	cs.reconcile(ctx)
+
 	refresh := time.NewTicker(schedulerRefreshInterval)
 	defer refresh.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
+			cs.stopAll()
 			return nil
 		case <-refresh.C:
-			if err := cs.startTriggerTickers(ctx); err != nil {
-				cs.logger.Printf("WARNING: cron scheduler refresh: %v", err)
+			cs.reconcile(ctx)
+		}
+	}
+}
+
+// reconcile syncs running goroutines with the current store state.
+// Starts goroutines for new/changed triggers, stops goroutines for
+// deleted or disabled triggers, and restarts goroutines whose schedule changed.
+func (cs *CronScheduler) reconcile(ctx context.Context) {
+	triggers, err := cs.store.GetEnabledCronTriggers()
+	if err != nil {
+		cs.logger.Printf("WARNING: cron scheduler reconcile: %v", err)
+		return
+	}
+
+	// Build a set of current trigger IDs → schedule for quick lookup.
+	current := make(map[string]string, len(triggers))
+	for _, t := range triggers {
+		current[t.ID] = t.Schedule
+	}
+
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+
+	// Stop goroutines for triggers no longer active or whose schedule changed.
+	for id, entry := range cs.active {
+		newSchedule, stillActive := current[id]
+		if !stillActive || newSchedule != entry.schedule {
+			entry.cancel()
+			delete(cs.active, id)
+			if !stillActive {
+				cs.logger.Printf("cron scheduler: stopped trigger %s (removed or disabled)", id)
+			} else {
+				cs.logger.Printf("cron scheduler: restarting trigger %s (schedule changed: %s → %s)",
+					id, entry.schedule, newSchedule)
 			}
 		}
 	}
-}
 
-// startTriggerTickers loads all cron triggers and starts a goroutine per trigger.
-// Duplicate tickers for the same trigger ID are harmless — each goroutine
-// stops when ctx is cancelled, so the worst case is one extra tick per
-// refresh interval before the old goroutine exits.
-func (cs *CronScheduler) startTriggerTickers(ctx context.Context) error {
-	triggers, err := cs.store.GetEnabledCronTriggers()
-	if err != nil {
-		return fmt.Errorf("load cron triggers: %w", err)
-	}
+	// Start goroutines for new triggers not yet running.
+	started := 0
 	for _, t := range triggers {
+		if _, running := cs.active[t.ID]; running {
+			continue // already has exactly one goroutine
+		}
 		interval, err := parseSchedule(t.Schedule)
 		if err != nil {
-			cs.logger.Printf("WARNING: trigger %s has invalid schedule %q: %v", t.ID, t.Schedule, err)
+			cs.logger.Printf("WARNING: trigger %s has invalid schedule %q: %v — skipped", t.ID, t.Schedule, err)
 			continue
 		}
-		go cs.runTicker(ctx, t, interval)
+		tickCtx, cancel := context.WithCancel(ctx)
+		cs.active[t.ID] = &tickerEntry{cancel: cancel, schedule: t.Schedule}
+		go cs.runTicker(tickCtx, t, interval)
+		started++
 	}
-	cs.logger.Printf("cron scheduler: loaded %d scheduled trigger(s)", len(triggers))
-	return nil
+
+	if started > 0 || len(cs.active) > 0 {
+		cs.logger.Printf("cron scheduler: %d active trigger(s) (%d started this cycle)",
+			len(cs.active), started)
+	}
+}
+
+// stopAll cancels all running ticker goroutines. Called on shutdown.
+func (cs *CronScheduler) stopAll() {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	for id, entry := range cs.active {
+		entry.cancel()
+		delete(cs.active, id)
+	}
 }
 
 // runTicker fires the trigger's workflow on every interval tick until ctx ends.
+// When ctx is cancelled (by reconcile or shutdown), the ticker stops cleanly.
 func (cs *CronScheduler) runTicker(ctx context.Context, t *store.Trigger, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	cs.logger.Printf("cron trigger %s: schedule=%s interval=%s workflow=%s",
+	cs.logger.Printf("cron trigger %s started: schedule=%s interval=%s workflow=%s",
 		t.ID, t.Schedule, interval, t.WorkflowID)
 	for {
 		select {
 		case <-ctx.Done():
+			cs.logger.Printf("cron trigger %s stopped", t.ID)
 			return
 		case <-ticker.C:
 			cs.dispatch(ctx, t)
@@ -116,6 +180,7 @@ func (cs *CronScheduler) runTicker(ctx context.Context, t *store.Trigger, interv
 
 // dispatch fires one workflow execution for a scheduled trigger.
 // Uses the semaphore to cap concurrent executions (same bound as Subscriber).
+// Drops the tick if the semaphore is full rather than blocking.
 func (cs *CronScheduler) dispatch(ctx context.Context, t *store.Trigger) {
 	select {
 	case cs.sem <- struct{}{}:
@@ -130,16 +195,15 @@ func (cs *CronScheduler) dispatch(ctx context.Context, t *store.Trigger) {
 	}()
 }
 
-// fireWorkflow resolves and executes the workflow for trigger t.
+// fireWorkflow executes the workflow for trigger t.
 func (cs *CronScheduler) fireWorkflow(ctx context.Context, t *store.Trigger) {
-	wf, err := cs.store.GetWorkflow(t.WorkflowID)
-	if err != nil || wf == nil {
-		cs.logger.Printf("WARNING: cron trigger %s: workflow %s not found", t.ID, t.WorkflowID)
-		return
+	cs.logger.Printf("cron trigger %s: firing workflow %s (%s)", t.ID, t.WorkflowID, t.Schedule)
+	cmdCtx := command.CommandContext{
+		RequestingAgent: "scheduler",
+		Timestamp:       time.Now().UTC(),
 	}
-	cs.logger.Printf("cron trigger %s: firing workflow %s (%s)", t.ID, wf.Name, t.Schedule)
-	if err := cs.executor.Run(ctx, wf, "scheduler"); err != nil {
-		cs.logger.Printf("WARNING: cron trigger %s: workflow %s failed: %v", t.ID, wf.Name, err)
+	if _, err := cs.executor.Run(ctx, t.WorkflowID, cmdCtx); err != nil {
+		cs.logger.Printf("WARNING: cron trigger %s: workflow %s failed: %v", t.ID, t.WorkflowID, err)
 	}
 }
 
@@ -154,15 +218,16 @@ func parseSchedule(s string) (time.Duration, error) {
 	case "@daily":
 		return 24 * time.Hour, nil
 	}
-	if after, ok := strings.CutPrefix(strings.TrimSpace(s), "@every "); ok {
-		d, err := time.ParseDuration(strings.TrimSpace(after))
-		if err != nil {
-			return 0, fmt.Errorf("invalid duration %q: %w", after, err)
-		}
-		if d < time.Minute {
-			return 0, fmt.Errorf("schedule interval %s is too short — minimum is 1m", d)
-		}
-		return d, nil
+	after, ok := strings.CutPrefix(strings.TrimSpace(s), "@every ")
+	if !ok {
+		return 0, fmt.Errorf("unrecognised schedule %q — use @every <dur>, @hourly, or @daily", s)
 	}
-	return 0, fmt.Errorf("unrecognised schedule %q — use @every <dur>, @hourly, or @daily", s)
+	d, err := time.ParseDuration(strings.TrimSpace(after))
+	if err != nil {
+		return 0, fmt.Errorf("invalid duration %q: %w", after, err)
+	}
+	if d < time.Minute {
+		return 0, fmt.Errorf("schedule interval %s is too short — minimum is 1m", d)
+	}
+	return d, nil
 }

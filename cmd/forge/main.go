@@ -7,6 +7,9 @@
 //   (ATLAS_WORKSPACE) and Nexus (NEXUS_WORKSPACE). Each service
 //   independently configures its workspace root via env vars.
 //
+// Phase 5 (ADR-027): CronScheduler wired alongside Subscriber.
+//   Shares the same semaphore. errCh buffer bumped to 3.
+//
 // forge is the Forge execution service daemon.
 //
 // Startup sequence:
@@ -17,7 +20,9 @@
 //  5. Workflow store (SQLite)
 //  6. Workflow executor
 //  7. Trigger registry + subscriber (Phase 3)
-//  8. HTTP API server (:8082)
+//  8. Cron scheduler (Phase 5 / ADR-027)
+//  9. Preflight checker (Phase 4 / ADR-010)
+// 10. HTTP API server
 package main
 
 import (
@@ -44,7 +49,7 @@ import (
 	"github.com/Harshmaury/Forge/internal/workflow"
 )
 
-const forgeVersion = "0.3.0"
+const forgeVersion = "0.6.0-phase5"
 
 func main() {
 	logger := log.New(os.Stdout, "[forge] ", log.LstdFlags)
@@ -62,7 +67,6 @@ func run(logger *log.Logger) error {
 	atlasAddr     := config.EnvOrDefault("ATLAS_HTTP_ADDR", config.DefaultAtlasAddr)
 	dbPath        := config.ExpandHome(config.EnvOrDefault("FORGE_DB_PATH", "~/.nexus/forge.db"))
 	workspaceRoot := config.ExpandHome(config.EnvOrDefault("FORGE_WORKSPACE", "~/workspace"))
-	// ADR-008: outbound token for all Nexus and Atlas calls.
 	serviceToken  := config.EnvOrDefault("FORGE_SERVICE_TOKEN", "")
 	if serviceToken == "" {
 		logger.Println("WARNING: FORGE_SERVICE_TOKEN not set — inter-service auth disabled")
@@ -117,10 +121,15 @@ func run(logger *log.Logger) error {
 	triggerRegistry   := trigger.NewRegistry(wfStore)
 	triggerSubscriber := trigger.NewSubscriber(nexusAddr, triggerRegistry, wfExecutor, logger, serviceToken)
 
-	// ── 8. PREFLIGHT CHECKER (Phase 4 / ADR-010) ──────────────────────────────
+	// ── 8. CRON SCHEDULER (Phase 5 / ADR-027) ────────────────────────────────
+	// Shares the Subscriber's semaphore — event and cron triggers compete for
+	// the same execution slots, preventing concurrent over-execution.
+	cronScheduler := trigger.NewCronScheduler(wfStore, wfExecutor, logger, triggerSubscriber.Sem())
+
+	// ── 9. PREFLIGHT CHECKER (Phase 4 / ADR-010) ──────────────────────────────
 	checker := preflight.NewChecker(atlas, logger)
 
-	// ── 9. HTTP API ───────────────────────────────────────────────────────────
+	// ── 10. HTTP API ──────────────────────────────────────────────────────────
 	apiServer := api.NewServer(api.ServerConfig{
 		Addr:             httpAddr,
 		Translator:       translator,
@@ -137,7 +146,7 @@ func run(logger *log.Logger) error {
 
 	// ── START GOROUTINES ──────────────────────────────────────────────────────
 	var wg sync.WaitGroup
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 3) // api + subscriber + scheduler
 
 	wg.Add(1)
 	go func() {
@@ -152,6 +161,14 @@ func run(logger *log.Logger) error {
 		defer wg.Done()
 		if err := triggerSubscriber.Run(ctx); err != nil && ctx.Err() == nil {
 			errCh <- fmt.Errorf("trigger subscriber: %w", err)
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := cronScheduler.Run(ctx); err != nil && ctx.Err() == nil {
+			errCh <- fmt.Errorf("cron scheduler: %w", err)
 		}
 	}()
 
