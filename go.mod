@@ -19,7 +19,7 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
-require github.com/Harshmaury/Canon v0.3.0 // indirect
+require github.com/Harshmaury/Canon v0.3.0
 
 // Replace directive points to local Nexus for topic constant imports
 // Update to a tagged release once Nexus publishes one
