@@ -11,15 +11,9 @@ require (
 	// SQLite — workflow definition storage (Phase 2)
 	// Same driver as Nexus and Atlas — no new toolchain dependency
 	github.com/mattn/go-sqlite3 v1.14.34
-
-	// CLI — forge subcommands (same library as engx in Nexus)
-	github.com/spf13/cobra v1.10.2
-
-	// YAML — workflow definition files (Phase 2)
-	gopkg.in/yaml.v3 v3.0.1
 )
 
-require github.com/Harshmaury/Canon v0.3.0
+require github.com/Harshmaury/Canon v0.4.1
 
 // Replace directive points to local Nexus for topic constant imports
 // Update to a tagged release once Nexus publishes one
