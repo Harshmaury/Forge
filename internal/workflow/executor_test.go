@@ -76,6 +76,22 @@ func (m *mockStore) DeleteSteps(workflowID string) error {
 }
 func (m *mockStore) Close() error { return nil }
 
+// Trigger stubs — satisfy store.Storer (Phase 3 methods not used by workflow executor tests).
+func (m *mockStore) CreateTrigger(t *store.Trigger) error                        { return nil }
+func (m *mockStore) GetTrigger(id string) (*store.Trigger, error)                { return nil, nil }
+func (m *mockStore) GetAllTriggers() ([]*store.Trigger, error)                   { return nil, nil }
+func (m *mockStore) GetEnabledTriggersByEvent(event string) ([]*store.Trigger, error) { return nil, nil }
+func (m *mockStore) GetEnabledCronTriggers() ([]*store.Trigger, error)           { return nil, nil }
+func (m *mockStore) DeleteTrigger(id string) error                               { return nil }
+
+// Transaction stub — satisfy store.Storer.
+func (m *mockStore) WithWorkflowTransaction(fn func() error) error           { return fn() }
+
+// Execution history stubs — Phase 4 methods not used by workflow executor tests.
+func (m *mockStore) LogExecution(r *store.ExecutionRecord) error                        { return nil }
+func (m *mockStore) GetHistory(limit int) ([]*store.ExecutionRecord, error)             { return nil, nil }
+func (m *mockStore) GetHistoryByTrace(traceID string) ([]*store.ExecutionRecord, error) { return nil, nil }
+
 // ── MOCK CLIENTS (for resolver) ───────────────────────────────────────────────
 
 type mockNexus struct{}

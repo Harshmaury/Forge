@@ -21,12 +21,9 @@ func makeChecker(services []*atlasclient.ProjectDetail, fail bool) *Checker {
 }
 
 func TestResult_Permitted(t *testing.T) {
-	r := &Result{Permitted: true, Project: &atlasclient.ProjectDetail{ID: "nexus"}}
+	r := &Result{Permitted: true}
 	if !r.Permitted {
 		t.Error("expected permitted=true")
-	}
-	if r.Project == nil || r.Project.ID != "nexus" {
-		t.Error("expected project nexus")
 	}
 }
 
