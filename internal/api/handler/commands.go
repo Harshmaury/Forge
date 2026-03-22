@@ -60,6 +60,30 @@ func (h *CommandHandler) Submit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// CW-5: idempotency gate — only applies when caller supplies an explicit ID.
+	// Empty ID means the translator will generate a UUID — those are never duplicates.
+	if raw.ID != "" && h.store != nil {
+		if cached, err := h.store.GetDedupRecord(raw.ID); err != nil {
+			// Dedup lookup failure is non-fatal — proceed with execution.
+			h.logger.Printf("WARNING: dedup lookup command_id=%s: %v — proceeding", raw.ID, err)
+		} else if cached != nil {
+			// Duplicate within TTL — return the original result as HTTP 409.
+			// Caller can inspect the body to confirm the original outcome.
+			var original any
+			if err := json.Unmarshal([]byte(cached.ResultJSON), &original); err != nil {
+				original = map[string]string{"raw": cached.ResultJSON}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(apiResponse{ //nolint:errcheck
+				OK:    false,
+				Data:  original,
+				Error: "duplicate command id — result from original execution returned",
+			})
+			return
+		}
+	}
+
 	cmd, err := h.translator.Translate(raw)
 	if err != nil {
 		respondErr(w, http.StatusBadRequest, err)
@@ -135,8 +159,9 @@ func (h *CommandHandler) recordExecution(
 	if !result.Success {
 		status = "failure"
 	}
+	recID := uuid.New().String()
 	if err := h.store.LogExecution(&store.ExecutionRecord{
-		ID:                uuid.New().String(),
+		ID:                recID,
 		CommandID:         cmd.ID,
 		Intent:            cmd.Intent,
 		Target:            cmd.Target,
@@ -150,6 +175,23 @@ func (h *CommandHandler) recordExecution(
 		PreflightSnapshot: snap,
 	}); err != nil {
 		h.logger.Printf("WARNING: record execution: trace=%s target=%s: %v", traceID, cmd.Target, err)
+	}
+
+	// CW-5: write dedup record keyed on the caller-supplied command ID.
+	// Only persisted when cmd.ID was supplied by caller (non-generated).
+	// Both success and failure outcomes are cached — retries get same response.
+	if cmd.ID != "" {
+		resultJSON, err := json.Marshal(result.ToExecutionResult())
+		if err == nil {
+			dedup := &store.DedupRecord{
+				CommandID:  cmd.ID,
+				ResultJSON: string(resultJSON),
+				ExpiresAt:  time.Now().UTC().Add(store.DedupTTL * time.Second),
+			}
+			if err := h.store.SetDedupRecord(dedup); err != nil {
+				h.logger.Printf("WARNING: set dedup record command_id=%s: %v", cmd.ID, err)
+			}
+		}
 	}
 }
 

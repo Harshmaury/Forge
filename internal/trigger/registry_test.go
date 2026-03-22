@@ -48,6 +48,8 @@ func (m *mockStore) GetHistoryByTrace(id string) ([]*store.ExecutionRecord, erro
 func (m *mockStore) WithWorkflowTransaction(fn func() error) error                  { return fn() }
 func (m *mockStore) DeleteTrigger(id string) error                     { return nil }
 func (m *mockStore) GetEnabledCronTriggers() ([]*store.Trigger, error)  { return nil, nil }
+func (m *mockStore) GetDedupRecord(commandID string) (*store.DedupRecord, error) { return nil, nil }
+func (m *mockStore) SetDedupRecord(r *store.DedupRecord) error                   { return nil }
 
 
 // ── FILTER MATCHING ───────────────────────────────────────────────────────────

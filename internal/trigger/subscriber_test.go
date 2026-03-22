@@ -52,6 +52,10 @@ func (m *mockWorkflowStore) GetSteps(id string) ([]*store.WorkflowStep, error) {
 	return m.steps, nil
 }
 
+// CW-5: dedup stubs — no-op for trigger tests.
+func (m *mockWorkflowStore) GetDedupRecord(commandID string) (*store.DedupRecord, error) { return nil, nil }
+func (m *mockWorkflowStore) SetDedupRecord(r *store.DedupRecord) error                   { return nil }
+
 type captureHandler struct {
 	mu       sync.Mutex
 	executed []string
@@ -89,10 +93,8 @@ func TestExtractPayload_FileModified(t *testing.T) {
 
 func TestExtractPayload_WorkspaceUpdated(t *testing.T) {
 	s := &Subscriber{logger: log.New(os.Stderr, "[test] ", 0)}
-	// workspace.updated has a different payload — returns empty, not an error
 	raw := json.RawMessage(`{"watch_dir":"/workspace","event_at":"2026-03-15T00:00:00Z"}`)
 	got := s.extractPayload(nexusevents.TopicWorkspaceUpdated, raw)
-	// Empty payload — trigger with no filter still fires
 	if got.Path != "" {
 		t.Errorf("expected empty path for workspace.updated, got %q", got.Path)
 	}
@@ -101,7 +103,6 @@ func TestExtractPayload_WorkspaceUpdated(t *testing.T) {
 func TestExtractPayload_InvalidJSON(t *testing.T) {
 	s := &Subscriber{logger: log.New(os.Stderr, "[test] ", 0)}
 	got := s.extractPayload(nexusevents.TopicWorkspaceFileModified, json.RawMessage(`not json`))
-	// Should return empty payload, not panic
 	if got.Path != "" {
 		t.Errorf("expected empty payload for invalid JSON, got path=%q", got.Path)
 	}
@@ -140,14 +141,13 @@ func TestDispatch_FiresMatchingWorkflow(t *testing.T) {
 		registry:   registry,
 		executor:   wfExecutor,
 		logger:     log.New(os.Stderr, "[test] ", 0),
-		httpClient: nil, // not used in dispatch test
+		httpClient: nil,
 		sem:        make(chan struct{}, 8),
 	}
 
 	p := WorkspaceEventPayload{Path: "/workspace/nexus/main.go", Extension: ".go"}
 	s.dispatch(context.Background(), nexusevents.TopicWorkspaceFileModified, p)
 
-	// Give goroutine time to complete.
 	time.Sleep(100 * time.Millisecond)
 
 	capture.mu.Lock()
@@ -170,11 +170,10 @@ func TestDispatch_NoMatchNoExecution(t *testing.T) {
 
 	s := &Subscriber{
 		registry: registry,
-		executor: nil, // not called if no match
+		executor: nil,
 		logger:   log.New(os.Stderr, "[test] ", 0),
 	}
 
-	// .md file — should not match .go filter
 	p := WorkspaceEventPayload{Path: "/workspace/nexus/README.md", Extension: ".md"}
 	s.dispatch(context.Background(), nexusevents.TopicWorkspaceFileModified, p)
 

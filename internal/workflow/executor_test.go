@@ -91,6 +91,10 @@ func (m *mockStore) WithWorkflowTransaction(fn func() error) error           { r
 func (m *mockStore) LogExecution(r *store.ExecutionRecord) error                        { return nil }
 func (m *mockStore) GetHistory(limit int) ([]*store.ExecutionRecord, error)             { return nil, nil }
 func (m *mockStore) GetHistoryByTrace(traceID string) ([]*store.ExecutionRecord, error) { return nil, nil }
+// CW-5: dedup stubs — no-op for workflow tests.
+func (m *mockStore) GetDedupRecord(commandID string) (*store.DedupRecord, error)        { return nil, nil }
+func (m *mockStore) SetDedupRecord(r *store.DedupRecord) error                          { return nil }
+
 
 // ── MOCK CLIENTS (for resolver) ───────────────────────────────────────────────
 

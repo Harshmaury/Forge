@@ -39,6 +39,8 @@ func New(dbPath string) (*Store, error) {
 	if err := s.migrate(); err != nil {
 		return nil, fmt.Errorf("forge migrations: %w", err)
 	}
+	// CW-5: purge any stale dedup records from a previous run.
+	_ = s.purgeExpiredDedup()
 	return s, nil
 }
 
@@ -383,6 +385,14 @@ var allMigrations = []schemaVersion{
 	// Default '' means all pre-ADR-021 rows unmarshal to zero PreflightSnapshot.
 	{4, `ALTER TABLE execution_history ADD COLUMN preflight_snapshot_json TEXT NOT NULL DEFAULT ''`},
 	{5, `ALTER TABLE triggers ADD COLUMN schedule TEXT NOT NULL DEFAULT ''`},
+
+	// v6 — command idempotency dedup table (CW-5)
+	{6, `CREATE TABLE IF NOT EXISTS command_dedup (
+		command_id  TEXT     PRIMARY KEY,
+		result_json TEXT     NOT NULL DEFAULT '',
+		expires_at  DATETIME NOT NULL
+	)`},
+	{6, `CREATE INDEX IF NOT EXISTS idx_dedup_expires ON command_dedup(expires_at)`},
 }
 
 func (s *Store) migrate() error {
@@ -418,6 +428,55 @@ func (s *Store) migrate() error {
 				return fmt.Errorf("record migration v%d: %w", m.version, err)
 			}
 		}
+	}
+	return nil
+}
+
+
+// ── COMMAND IDEMPOTENCY DEDUP (CW-5) ─────────────────────────────────────────
+
+// SetDedupRecord stores or replaces a dedup entry for command_id (upsert).
+// Called immediately after a command completes successfully or fails —
+// both outcomes are cached so retries get the same response.
+func (s *Store) SetDedupRecord(r *DedupRecord) error {
+	_, err := s.db.Exec(
+		`INSERT OR REPLACE INTO command_dedup (command_id, result_json, expires_at)
+		 VALUES (?, ?, ?)`,
+		r.CommandID, r.ResultJSON, r.ExpiresAt.UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("set dedup record %s: %w", r.CommandID, err)
+	}
+	return nil
+}
+
+// GetDedupRecord returns the cached result for command_id, or nil if not found
+// or expired. Expired records are left in the table — purgeExpiredDedup cleans them.
+func (s *Store) GetDedupRecord(commandID string) (*DedupRecord, error) {
+	row := s.db.QueryRow(
+		`SELECT command_id, result_json, expires_at
+		 FROM command_dedup
+		 WHERE command_id = ? AND expires_at > ?`,
+		commandID, time.Now().UTC(),
+	)
+	r := &DedupRecord{}
+	if err := row.Scan(&r.CommandID, &r.ResultJSON, &r.ExpiresAt); err == sql.ErrNoRows {
+		return nil, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("get dedup record %s: %w", commandID, err)
+	}
+	return r, nil
+}
+
+// purgeExpiredDedup removes dedup records past their TTL.
+// Called once at startup — keeps the table small over long-running instances.
+func (s *Store) purgeExpiredDedup() error {
+	_, err := s.db.Exec(
+		`DELETE FROM command_dedup WHERE expires_at <= ?`,
+		time.Now().UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("purge dedup: %w", err)
 	}
 	return nil
 }

@@ -83,6 +83,21 @@ type ExecutionRecord struct {
 	PreflightSnapshot PreflightSnapshot `json:"preflight_snapshot"`
 }
 
+
+// ── DEDUP TYPES (CW-5) ────────────────────────────────────────────────────────
+
+// DedupTTL is the window during which a command_id is considered a duplicate.
+// Covers all reasonable CLI retry intervals (default: 5s–30s exponential backoff).
+const DedupTTL = 5 * 60 // 300 seconds
+
+// DedupRecord is a stored idempotency key for a completed command execution.
+// ResultJSON is the JSON-serialised command.ExecutionResult returned to the
+// original caller — replayed verbatim to the duplicate caller (HTTP 409).
+type DedupRecord struct {
+	CommandID  string    // the caller-supplied command.Command.ID
+	ResultJSON string    // JSON of command.ExecutionResult
+	ExpiresAt  time.Time // UTC — record is purged after this time
+}
 // ── STORER INTERFACE ──────────────────────────────────────────────────────────
 
 // Storer is the Forge workflow store contract.
@@ -116,4 +131,12 @@ type Storer interface {
 	LogExecution(r *ExecutionRecord) error
 	GetHistory(limit int) ([]*ExecutionRecord, error)
 	GetHistoryByTrace(traceID string) ([]*ExecutionRecord, error)
+
+	// ── Idempotency dedup (CW-5) ──────────────────────────────────
+	// SetDedupRecord stores a completed result keyed by command_id.
+	// Replaces any existing record for the same command_id (upsert).
+	SetDedupRecord(r *DedupRecord) error
+	// GetDedupRecord returns the cached result for command_id if it
+	// exists and has not expired. Returns nil, nil when not found.
+	GetDedupRecord(commandID string) (*DedupRecord, error)
 }

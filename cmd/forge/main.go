@@ -69,7 +69,10 @@ func run(logger *log.Logger) error {
 	workspaceRoot := config.ExpandHome(config.EnvOrDefault("FORGE_WORKSPACE", "~/workspace"))
 	serviceToken  := config.EnvOrDefault("FORGE_SERVICE_TOKEN", "")
 	if serviceToken == "" {
-		logger.Println("WARNING: FORGE_SERVICE_TOKEN not set — inter-service auth disabled")
+				if os.Getenv("ENGX_AUTH_REQUIRED") == "true" {
+			logger.Fatalf("FATAL: ENGX_AUTH_REQUIRED=true but FORGE_SERVICE_TOKEN not set — refusing to start insecurely. Set FORGE_SERVICE_TOKEN in ~/.nexus/service-tokens or disable with ENGX_AUTH_REQUIRED=false")
+		}
+		logger.Println("WARNING: FORGE_SERVICE_TOKEN not set — inter-service auth disabled. Set ENGX_AUTH_REQUIRED=true to enforce strict mode.")
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
