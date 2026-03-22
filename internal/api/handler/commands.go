@@ -11,6 +11,7 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -31,6 +32,7 @@ type CommandHandler struct {
 	engine     *executor.Engine
 	checker    *preflight.Checker // nil = preflight disabled
 	store      store.Storer       // nil = history logging disabled
+	logger     *log.Logger
 }
 
 // NewCommandHandler creates a CommandHandler.
@@ -40,8 +42,12 @@ func NewCommandHandler(
 	e *executor.Engine,
 	c *preflight.Checker,
 	s store.Storer,
+	l *log.Logger,
 ) *CommandHandler {
-	return &CommandHandler{translator: t, resolver: r, engine: e, checker: c, store: s}
+	if l == nil {
+		l = log.Default()
+	}
+	return &CommandHandler{translator: t, resolver: r, engine: e, checker: c, store: s, logger: l}
 }
 
 // Submit handles POST /commands.
@@ -129,7 +135,7 @@ func (h *CommandHandler) recordExecution(
 	if !result.Success {
 		status = "failure"
 	}
-	_ = h.store.LogExecution(&store.ExecutionRecord{
+	if err := h.store.LogExecution(&store.ExecutionRecord{
 		ID:                uuid.New().String(),
 		CommandID:         cmd.ID,
 		Intent:            cmd.Intent,
@@ -142,7 +148,9 @@ func (h *CommandHandler) recordExecution(
 		StartedAt:         startedAt,
 		FinishedAt:        finishedAt,
 		PreflightSnapshot: snap,
-	})
+	}); err != nil {
+		h.logger.Printf("WARNING: record execution: trace=%s target=%s: %v", traceID, cmd.Target, err)
+	}
 }
 
 // recordDenied persists a preflight-denied execution record.
@@ -157,7 +165,7 @@ func (h *CommandHandler) recordDenied(
 		return
 	}
 	now := time.Now().UTC()
-	_ = h.store.LogExecution(&store.ExecutionRecord{
+	if err := h.store.LogExecution(&store.ExecutionRecord{
 		ID:                uuid.New().String(),
 		CommandID:         cmd.ID,
 		Intent:            cmd.Intent,
@@ -169,7 +177,9 @@ func (h *CommandHandler) recordDenied(
 		StartedAt:         startedAt,
 		FinishedAt:        now,
 		PreflightSnapshot: snap,
-	})
+	}); err != nil {
+		h.logger.Printf("WARNING: record denied execution: trace=%s target=%s: %v", traceID, cmd.Target, err)
+	}
 }
 
 // IntentsHandler handles GET /intents.

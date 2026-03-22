@@ -53,7 +53,7 @@ func NewServer(cfg ServerConfig) *Server {
 	// Phase 4: CommandHandler now takes checker + store for preflight + history.
 	commandH := handler.NewCommandHandler(
 		cfg.Translator, cfg.Resolver, cfg.Engine,
-		cfg.Checker, cfg.Store,
+		cfg.Checker, cfg.Store, logger,
 	)
 	intentsH := handler.NewIntentsHandler(cfg.Engine)
 
