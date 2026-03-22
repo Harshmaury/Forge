@@ -46,28 +46,25 @@ func (m *schedulerMockStore) GetWorkflow(id string) (*store.Workflow, error) {
 }
 
 // Satisfy full Storer interface — unused in scheduler tests.
-func (m *schedulerMockStore) Close() error                                             { return nil }
-func (m *schedulerMockStore) CreateWorkflow(w *store.Workflow) error                   { return nil }
-func (m *schedulerMockStore) GetAllWorkflows() ([]*store.Workflow, error)              { return nil, nil }
-func (m *schedulerMockStore) DeleteWorkflow(id string) error                           { return nil }
-func (m *schedulerMockStore) WithWorkflowTransaction(fn func() error) error            { return fn() }
-func (m *schedulerMockStore) AddStep(s *store.WorkflowStep) error                      { return nil }
-func (m *schedulerMockStore) GetSteps(id string) ([]*store.WorkflowStep, error)        { return nil, nil }
-func (m *schedulerMockStore) DeleteSteps(id string) error                              { return nil }
-func (m *schedulerMockStore) CreateTrigger(t *store.Trigger) error                     { return nil }
-func (m *schedulerMockStore) GetTrigger(id string) (*store.Trigger, error)             { return nil, nil }
-func (m *schedulerMockStore) GetAllTriggers() ([]*store.Trigger, error)                { return nil, nil }
-func (m *schedulerMockStore) GetEnabledTriggersByEvent(e string) ([]*store.Trigger, error) {
-	return nil, nil
-}
-func (m *schedulerMockStore) DeleteTrigger(id string) error { return nil }
-func (m *schedulerMockStore) LogExecution(r *store.ExecutionRecord) error { return nil }
-func (m *schedulerMockStore) GetHistory(limit int) ([]*store.ExecutionRecord, error) {
-	return nil, nil
-}
-func (m *schedulerMockStore) GetHistoryByTrace(id string) ([]*store.ExecutionRecord, error) {
-	return nil, nil
-}
+func (m *schedulerMockStore) Close() error                                                        { return nil }
+func (m *schedulerMockStore) CreateWorkflow(w *store.Workflow) error                              { return nil }
+func (m *schedulerMockStore) GetAllWorkflows() ([]*store.Workflow, error)                         { return nil, nil }
+func (m *schedulerMockStore) DeleteWorkflow(id string) error                                      { return nil }
+func (m *schedulerMockStore) WithWorkflowTransaction(fn func() error) error                       { return fn() }
+func (m *schedulerMockStore) AddStep(s *store.WorkflowStep) error                                 { return nil }
+func (m *schedulerMockStore) GetSteps(id string) ([]*store.WorkflowStep, error)                   { return nil, nil }
+func (m *schedulerMockStore) DeleteSteps(id string) error                                         { return nil }
+func (m *schedulerMockStore) CreateTrigger(t *store.Trigger) error                                { return nil }
+func (m *schedulerMockStore) GetTrigger(id string) (*store.Trigger, error)                        { return nil, nil }
+func (m *schedulerMockStore) GetAllTriggers() ([]*store.Trigger, error)                           { return nil, nil }
+func (m *schedulerMockStore) GetEnabledTriggersByEvent(e string) ([]*store.Trigger, error)        { return nil, nil }
+func (m *schedulerMockStore) DeleteTrigger(id string) error                                       { return nil }
+func (m *schedulerMockStore) LogExecution(r *store.ExecutionRecord) error                         { return nil }
+func (m *schedulerMockStore) GetHistory(limit int) ([]*store.ExecutionRecord, error)              { return nil, nil }
+func (m *schedulerMockStore) GetHistoryByTrace(id string) ([]*store.ExecutionRecord, error)       { return nil, nil }
+// CW-5: dedup stubs — no-op for scheduler tests.
+func (m *schedulerMockStore) GetDedupRecord(commandID string) (*store.DedupRecord, error)         { return nil, nil }
+func (m *schedulerMockStore) SetDedupRecord(r *store.DedupRecord) error                           { return nil }
 
 // ── COUNTING EXECUTOR ─────────────────────────────────────────────────────────
 
@@ -104,10 +101,10 @@ func newTestScheduler(s *schedulerMockStore) (*CronScheduler, chan struct{}) {
 	sem := make(chan struct{}, 8)
 	logger := log.New(os.Stderr, "[test] ", 0)
 	cs := &CronScheduler{
-		store:    s,
-		logger:   logger,
-		sem:      sem,
-		active:   make(map[string]*tickerEntry),
+		store:  s,
+		logger: logger,
+		sem:    sem,
+		active: make(map[string]*tickerEntry),
 	}
 	return cs, sem
 }
@@ -118,9 +115,6 @@ func trigger1m(id, workflowID string) *store.Trigger {
 
 // ── TESTS ─────────────────────────────────────────────────────────────────────
 
-// TestReconcile_NoDuplicateTickers verifies that calling reconcile multiple
-// times for the same trigger IDs starts exactly one goroutine per trigger,
-// not one per reconcile call.
 func TestReconcile_NoDuplicateTickers(t *testing.T) {
 	s := &schedulerMockStore{}
 	s.setTriggers([]*store.Trigger{
@@ -132,7 +126,6 @@ func TestReconcile_NoDuplicateTickers(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Call reconcile 5 times — simulates 5 refresh cycles.
 	for i := 0; i < 5; i++ {
 		cs.reconcile(ctx)
 	}
@@ -146,8 +139,6 @@ func TestReconcile_NoDuplicateTickers(t *testing.T) {
 	}
 }
 
-// TestReconcile_StopsRemovedTrigger verifies that a trigger removed from the
-// store is stopped on the next reconcile cycle.
 func TestReconcile_StopsRemovedTrigger(t *testing.T) {
 	s := &schedulerMockStore{}
 	s.setTriggers([]*store.Trigger{trigger1m("t1", "wf-1")})
@@ -165,7 +156,6 @@ func TestReconcile_StopsRemovedTrigger(t *testing.T) {
 	}
 	cs.mu.Unlock()
 
-	// Remove the trigger from store.
 	s.setTriggers(nil)
 	cs.reconcile(ctx)
 
@@ -178,8 +168,6 @@ func TestReconcile_StopsRemovedTrigger(t *testing.T) {
 	}
 }
 
-// TestReconcile_RestartsOnScheduleChange verifies that when a trigger's
-// schedule string changes, the old goroutine is cancelled and a new one started.
 func TestReconcile_RestartsOnScheduleChange(t *testing.T) {
 	s := &schedulerMockStore{}
 	s.setTriggers([]*store.Trigger{trigger1m("t1", "wf-1")})
@@ -197,7 +185,6 @@ func TestReconcile_RestartsOnScheduleChange(t *testing.T) {
 		t.Fatal("expected active entry for t1")
 	}
 
-	// Change schedule.
 	s.setTriggers([]*store.Trigger{
 		{ID: "t1", WorkflowID: "wf-1", Schedule: "@every 2m", Enabled: true},
 	})
@@ -218,8 +205,6 @@ func TestReconcile_RestartsOnScheduleChange(t *testing.T) {
 	}
 }
 
-// TestStopAll verifies that stopAll cancels all running tickers and empties
-// the active map — called on context cancellation (daemon shutdown).
 func TestStopAll(t *testing.T) {
 	s := &schedulerMockStore{}
 	s.setTriggers([]*store.Trigger{
@@ -251,7 +236,6 @@ func TestStopAll(t *testing.T) {
 	}
 }
 
-// TestParseSchedule covers all valid and invalid schedule expressions.
 func TestParseSchedule(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -287,12 +271,9 @@ func TestParseSchedule(t *testing.T) {
 	}
 }
 
-// TestSemaphoreDropsWhenFull verifies that dispatch does not block when the
-// semaphore is full — it drops the tick with a WARNING log instead.
 func TestSemaphoreDropsWhenFull(t *testing.T) {
 	s := &schedulerMockStore{}
 	sem := make(chan struct{}, 1)
-	// Fill the semaphore completely.
 	sem <- struct{}{}
 
 	var logBuf atomic.Value
@@ -308,7 +289,6 @@ func TestSemaphoreDropsWhenFull(t *testing.T) {
 	ctx := context.Background()
 	t1 := trigger1m("t1", "wf-1")
 
-	// dispatch should return immediately without blocking.
 	done := make(chan struct{})
 	go func() {
 		cs.dispatch(ctx, t1)
@@ -317,7 +297,6 @@ func TestSemaphoreDropsWhenFull(t *testing.T) {
 
 	select {
 	case <-done:
-		// correct — returned without blocking
 	case <-time.After(500 * time.Millisecond):
 		t.Error("dispatch blocked when semaphore was full — expected immediate drop")
 	}
