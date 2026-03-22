@@ -21,7 +21,7 @@ import (
 
 // SupportedEvents is the set of workspace event topics Forge can trigger on.
 // FG-H-06: keyed by canonevents.Topic (not string) for type-safe lookup.
-var SupportedEvents = map[canonevents.Topic]bool{
+var SupportedEvents = map[canonevents.TopicType]bool{
 	canonevents.TopicWorkspaceFileCreated:     true,
 	canonevents.TopicWorkspaceFileModified:    true,
 	canonevents.TopicWorkspaceFileDeleted:     true,
@@ -65,7 +65,7 @@ func (r *CreateTriggerRequest) Validate() error {
 	if r.Event == "" {
 		return fmt.Errorf("either event or schedule is required")
 	}
-	if !SupportedEvents[canonevents.Topic(r.Event)] {
+	if !SupportedEvents[canonevents.TopicType(r.Event)] {
 		return fmt.Errorf("unsupported event %q — supported: workspace.file.created, .modified, .deleted, .updated, .project.detected", r.Event)
 	}
 	return nil
