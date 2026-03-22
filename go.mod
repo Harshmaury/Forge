@@ -13,7 +13,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.34
 )
 
-require github.com/Harshmaury/Canon v0.4.1
+require github.com/Harshmaury/Canon v1.0.0
 
 // Replace directive points to local Nexus for topic constant imports
 // Update to a tagged release once Nexus publishes one

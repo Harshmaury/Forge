@@ -1,7 +1,7 @@
 // @forge-project: forge
 // @forge-path: internal/trigger/model.go
 // FG-H-06: SupportedEvents map key type changed from string to
-//   nexusevents.Topic for consistency with FG-H-02 (subscriber lookup).
+//   canonevents.Topic for consistency with FG-H-02 (subscriber lookup).
 //   The map is populated from topic constants — no string literals.
 //
 // Package trigger handles automation trigger registration and event matching.
@@ -14,19 +14,19 @@ import (
 	"strings"
 
 	"github.com/Harshmaury/Forge/internal/store"
-	nexusevents "github.com/Harshmaury/Nexus/pkg/events"
+	canonevents "github.com/Harshmaury/Canon/events" // ADR-045: migrated from Nexus/pkg/events
 )
 
 // ── SUPPORTED EVENTS ─────────────────────────────────────────────────────────
 
 // SupportedEvents is the set of workspace event topics Forge can trigger on.
-// FG-H-06: keyed by nexusevents.Topic (not string) for type-safe lookup.
-var SupportedEvents = map[nexusevents.Topic]bool{
-	nexusevents.TopicWorkspaceFileCreated:     true,
-	nexusevents.TopicWorkspaceFileModified:    true,
-	nexusevents.TopicWorkspaceFileDeleted:     true,
-	nexusevents.TopicWorkspaceUpdated:         true,
-	nexusevents.TopicWorkspaceProjectDetected: true,
+// FG-H-06: keyed by canonevents.Topic (not string) for type-safe lookup.
+var SupportedEvents = map[canonevents.Topic]bool{
+	canonevents.TopicWorkspaceFileCreated:     true,
+	canonevents.TopicWorkspaceFileModified:    true,
+	canonevents.TopicWorkspaceFileDeleted:     true,
+	canonevents.TopicWorkspaceUpdated:         true,
+	canonevents.TopicWorkspaceProjectDetected: true,
 }
 
 // ── API REQUEST TYPES ─────────────────────────────────────────────────────────
@@ -65,7 +65,7 @@ func (r *CreateTriggerRequest) Validate() error {
 	if r.Event == "" {
 		return fmt.Errorf("either event or schedule is required")
 	}
-	if !SupportedEvents[nexusevents.Topic(r.Event)] {
+	if !SupportedEvents[canonevents.Topic(r.Event)] {
 		return fmt.Errorf("unsupported event %q — supported: workspace.file.created, .modified, .deleted, .updated, .project.detected", r.Event)
 	}
 	return nil

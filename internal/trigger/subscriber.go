@@ -32,7 +32,7 @@ import (
 
 	"github.com/Harshmaury/Forge/internal/command"
 	"github.com/Harshmaury/Forge/internal/workflow"
-	nexusevents "github.com/Harshmaury/Nexus/pkg/events"
+	canonevents "github.com/Harshmaury/Canon/events" // ADR-045: migrated from Nexus/pkg/events
 )
 
 // ── CONSTANTS ─────────────────────────────────────────────────────────────────
@@ -224,10 +224,10 @@ func (s *Subscriber) dispatch(
 // Returns an empty payload on parse failure — triggers with no filter still fire.
 func (s *Subscriber) extractPayload(eventType string, raw json.RawMessage) WorkspaceEventPayload {
 	switch eventType {
-	case nexusevents.TopicWorkspaceFileCreated,
-		nexusevents.TopicWorkspaceFileModified,
-		nexusevents.TopicWorkspaceFileDeleted:
-		var p nexusevents.WorkspaceFilePayload
+	case canonevents.TopicWorkspaceFileCreated,
+		canonevents.TopicWorkspaceFileModified,
+		canonevents.TopicWorkspaceFileDeleted:
+		var p canonevents.WorkspaceFilePayload
 		if err := json.Unmarshal(raw, &p); err != nil {
 			return WorkspaceEventPayload{}
 		}
