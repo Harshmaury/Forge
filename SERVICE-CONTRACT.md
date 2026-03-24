@@ -1,100 +1,87 @@
+// @forge-project: forge
+// @forge-path: SERVICE-CONTRACT.md
 # SERVICE-CONTRACT.md — Forge
+# @version: 0.5.0-phase5
+# @updated: 2026-03-25
 
-**Service:** forge
-**Domain:** Execution
-**Port:** 8082
-**ADRs:** ADR-004 (intent model), ADR-005 (lifecycle protocol), ADR-006 (Atlas context),
-         ADR-007 (automation triggers), ADR-008 (auth), ADR-010 (preflight + history),
-         ADR-021 (execution context snapshot)
-**Version:** 0.5.0-phase4
-**Updated:** 2026-03-18
+**Port:** 8082 · **DB:** `~/.nexus/forge.db` · **Domain:** Execution
 
 ---
 
-## Role
+## Code
 
-Execution engine. Translates developer intent into coordinated platform
-actions. Every input becomes a Command object before the executor sees it.
-Forge acts on the system — it is the only service permitted to instruct
-Nexus to start or stop services.
-
----
-
-## Inputs
-
-- `POST /commands` — raw command request (translated to Command before execution)
-- `POST /workflows` — workflow definition
-- `POST /triggers` — automation trigger registration
-- `Nexus GET /events?since=<id>` — workspace events for trigger matching
-- `Atlas GET /graph/services` — verified project list for preflight validation
-
----
-
-## Outputs
-
-- `GET /health` — health check (no auth)
-- `GET /history` — paginated execution history
-- `GET /history/:trace_id` — execution records for one trace
-- `GET /workflows` — all defined workflows
-- `GET /triggers` — all registered triggers
-- `POST /projects/:id/start|stop` — lifecycle instructions sent to Nexus
-- Execution results returned in `POST /commands` response
+```
+cmd/forge/main.go                startup wiring
+internal/command/model.go        Command struct — {id, intent, target, parameters, context}
+internal/command/validator.go    validates raw input
+internal/command/translator.go   translates to Command
+internal/executor/engine.go      dispatches to intent handlers
+internal/executor/intent/        run.go · build.go · deploy.go · test.go
+internal/preflight/checker.go    queries Atlas before execution (fail-open)
+internal/workflow/               workflow model + executor
+internal/trigger/scheduler.go    cron + event trigger dispatch (semaphore: max 8)
+internal/store/db.go             Storer, SQLite, versioned migrations (v6: command_dedup)
+internal/api/handler/history.go  GET /history, GET /history/:trace_id
+```
 
 ---
 
-## Dependencies
+## Contract
 
-| Service | Used for                          | Auth required   |
-|---------|-----------------------------------|-----------------|
-| Nexus   | Lifecycle control + event polling | X-Service-Token |
-| Atlas   | Preflight context + workspace ctx | X-Service-Token |
+### Endpoints
 
-Forge does not depend on Guardian, Navigator, Observer, Metrics, or Sentinel.
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/health` | none | `{"ok":true,"status":"healthy","service":"forge"}` |
+| POST | `/commands` | token | Submit command — returns result or `409` on duplicate |
+| GET | `/history` | token | Paginated execution history — `ForgeExecutionDTO[]` |
+| GET | `/history/:trace_id` | token | Execution records for one trace |
+| GET | `/workflows` | token | All defined workflows |
+| POST | `/workflows` | token | Define workflow |
+| GET | `/triggers` | token | All registered triggers |
+| POST | `/triggers` | token | Register automation trigger |
 
----
+### Command dedup
 
-## Guarantees
+Caller supplies explicit `command_id`:
+- First call: `200 OK` + result
+- Retry within 300s TTL (same id): `409` + body `{"ok":false,"data":<original result>}`
+- No `command_id` supplied: UUID generated — never a duplicate
 
-- All input becomes a `Command{id, intent, target, parameters, context}` before
-  the executor sees it. No raw strings reach the executor (ADR-004).
-- `ResolveContext` is called once per workflow run — not per step (ADR-006 Rule 4).
-- Preflight check queries Atlas before execution. Fail-open if Atlas unreachable —
-  a WARNING is logged and execution proceeds (ADR-010).
-- `PreflightSnapshot` is captured at `checker.Check()` call time and passed
-  by value — never re-queried between check and history log (ADR-021).
-- Every execution (permitted, denied, failed) is logged to `execution_history`.
-- Trigger dispatch is bounded to 8 concurrent workflow goroutines via semaphore.
-  Dropped triggers are logged at WARNING level (ADR-007).
-- All migrations are in a single ordered slice in `internal/store/db.go`.
+### Execution record schema
 
----
+`ForgeExecutionDTO`: `id`, `command_id`, `intent`, `target`, `trace_id`, `status`, `output`, `error`, `duration_ms`, `started_at`, `finished_at`, `actor_sub`, `actor_scope`.
 
-## Non-Responsibilities
+### Failure conditions
 
-- Forge does not own the project registry — Nexus does (ADR-001).
-- Forge does not index the workspace — Atlas does.
-- Forge does not resolve context by scanning the filesystem — it queries Atlas (ADR-006).
-- Forge does not evaluate policy findings — Guardian does.
-- Forge does not call any observer service (Metrics, Navigator, Guardian,
-  Observer, Sentinel).
-- Forge does not make AI calls of any kind.
+| Code | Condition |
+|------|-----------|
+| 400 | Invalid command input |
+| 401 | Missing or invalid `X-Service-Token` |
+| 404 | Workflow or trigger not found |
+| 409 | Duplicate command within TTL |
 
 ---
 
-## Data Authority
+## Control
 
-**Primary authority for:**
-- Command execution state — `~/.nexus/forge.db`
-- Workflow definitions — `workflows` + `workflow_steps` tables
-- Automation triggers — `triggers` table
-- Execution history — `execution_history` table (including PreflightSnapshot)
+**Command lifecycle:**
+1. `POST /commands` → `validator.Validate()` → `translator.Translate()` → `Command`
+2. Dedup check against `command_dedup` table (TTL 300s)
+3. `preflight.Checker.Check()` — `Atlas GET /graph/services` — fail-open
+4. `executor.Execute()` → intent handler
+5. Intent handler: `Nexus POST /projects/:id/start|stop`
+6. Result → `execution_history`
+
+**Trigger dispatch:** cron ticks + event poll every 3s. Semaphore: max 8 concurrent goroutines. Dropped triggers logged at WARNING.
+
+**PreflightSnapshot:** captured at `checker.Check()` call time, passed by value — immutable through the execution pipeline (ADR-021).
 
 ---
 
-## Concurrency Model
+## Context
 
-- SQLite store accessed through `store.Storer` interface.
-- Trigger subscriber goroutine polls Nexus events independently.
-- Workflow executor goroutines bounded by semaphore (max 8 concurrent).
-- `X-Trace-ID` middleware propagates trace IDs on all responses.
-- `PreflightSnapshot` passed by value — immutable across goroutine boundary.
+- Sole service permitted to call `POST /projects/:id/start|stop` on Nexus.
+- Does not call Guardian, Navigator, Observer, Metrics, or Sentinel.
+- Does not scan the filesystem — queries Atlas for workspace context (ADR-006).
+- Does not make AI calls.
