@@ -176,7 +176,7 @@ func (s *Store) CreateTrigger(t *Trigger) error {
 	now := time.Now().UTC()
 	_, err := s.db.Exec(`
 		INSERT INTO triggers (id, event, workflow_id, filter_ext, filter_proj, filter_dir, schedule, enabled, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, t.ID, t.Event, t.WorkflowID, t.FilterExt, t.FilterProj, t.FilterDir, t.Schedule, t.Enabled, now)
 	if err != nil {
 		return fmt.Errorf("create trigger %s: %w", t.ID, err)
@@ -186,12 +186,12 @@ func (s *Store) CreateTrigger(t *Trigger) error {
 
 func (s *Store) GetTrigger(id string) (*Trigger, error) {
 	row := s.db.QueryRow(`
-		SELECT id, event, workflow_id, filter_ext, filter_proj, filter_dir, enabled, created_at
+		SELECT id, event, workflow_id, filter_ext, filter_proj, filter_dir, schedule, enabled, created_at
 		FROM triggers WHERE id = ?
 	`, id)
 	t := &Trigger{}
 	err := row.Scan(&t.ID, &t.Event, &t.WorkflowID, &t.FilterExt,
-		&t.FilterProj, &t.FilterDir, &t.Enabled, &t.CreatedAt)
+		&t.FilterProj, &t.FilterDir, &t.Schedule, &t.Enabled, &t.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -203,7 +203,7 @@ func (s *Store) GetTrigger(id string) (*Trigger, error) {
 
 func (s *Store) GetAllTriggers() ([]*Trigger, error) {
 	rows, err := s.db.Query(`
-		SELECT id, event, workflow_id, filter_ext, filter_proj, filter_dir, enabled, created_at
+		SELECT id, event, workflow_id, filter_ext, filter_proj, filter_dir, schedule, enabled, created_at
 		FROM triggers ORDER BY created_at DESC
 	`)
 	if err != nil {
@@ -215,7 +215,7 @@ func (s *Store) GetAllTriggers() ([]*Trigger, error) {
 
 func (s *Store) GetEnabledTriggersByEvent(event string) ([]*Trigger, error) {
 	rows, err := s.db.Query(`
-		SELECT id, event, workflow_id, filter_ext, filter_proj, filter_dir, enabled, created_at
+		SELECT id, event, workflow_id, filter_ext, filter_proj, filter_dir, schedule, enabled, created_at
 		FROM triggers WHERE event = ? AND enabled = 1
 	`, event)
 	if err != nil {
@@ -235,7 +235,7 @@ func (s *Store) GetEnabledCronTriggers() ([]*Trigger, error) {
 		return nil, fmt.Errorf("query cron triggers: %w", err)
 	}
 	defer rows.Close()
-	return scanTriggers(rows)
+	return scanCronTriggers(rows)
 }
 
 func (s *Store) DeleteTrigger(id string) error {
@@ -483,13 +483,32 @@ func (s *Store) purgeExpiredDedup() error {
 
 // ── SCAN HELPERS ─────────────────────────────────────────────────────────────
 
+// scanTriggers scans rows from queries that SELECT 9 columns including schedule.
+// All trigger queries (GetAllTriggers, GetTrigger, GetEnabledTriggersByEvent)
+// include schedule in their SELECT list — this is the only scan helper for them.
 func scanTriggers(rows *sql.Rows) ([]*Trigger, error) {
 	var triggers []*Trigger
 	for rows.Next() {
 		t := &Trigger{}
 		if err := rows.Scan(&t.ID, &t.Event, &t.WorkflowID, &t.FilterExt,
-			&t.FilterProj, &t.FilterDir, &t.Enabled, &t.CreatedAt); err != nil {
+			&t.FilterProj, &t.FilterDir, &t.Schedule, &t.Enabled, &t.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan trigger: %w", err)
+		}
+		triggers = append(triggers, t)
+	}
+	return triggers, rows.Err()
+}
+
+// scanCronTriggers scans rows from GetEnabledCronTriggers which SELECT 9 columns
+// in the order: id, event, workflow_id, filter_ext, filter_proj, filter_dir,
+// schedule, enabled, created_at. Kept separate to make the column mapping explicit.
+func scanCronTriggers(rows *sql.Rows) ([]*Trigger, error) {
+	var triggers []*Trigger
+	for rows.Next() {
+		t := &Trigger{}
+		if err := rows.Scan(&t.ID, &t.Event, &t.WorkflowID, &t.FilterExt,
+			&t.FilterProj, &t.FilterDir, &t.Schedule, &t.Enabled, &t.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan cron trigger: %w", err)
 		}
 		triggers = append(triggers, t)
 	}
