@@ -1,0 +1,39 @@
+# .goreleaser.yaml — forge service release
+version: 2
+project_name: forge
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: forge
+    binary: bin/forge
+    main: ./cmd/forge
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+      - -X main.serviceVersion={{.Version}}
+
+archives:
+  - id: service
+    name_template: "forge-{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+    format: tar.gz
+    wrap_in_directory: false
+    files:
+      - nexus.yaml
+
+checksum:
+  name_template: "forge-{{ .Version }}-checksums.txt"
+  algorithm: sha256
+
+release:
+  github:
+    owner: Harshmaury
+    name: Forge
+  draft: false
+  prerelease: auto
+  name_template: "forge v{{ .Version }}"
